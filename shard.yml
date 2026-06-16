@@ -1,0 +1,17 @@
+name: finfry
+version: 0.1.0
+
+authors:
+  - Thomas Sawyer <transfire@gmail.com>
+
+targets:
+  finfry:
+    main: src/cli.cr
+
+crystal: '>= 1.20.2'
+
+license: MIT
+
+dependencies:
+  jargon:
+    path: ../jargon

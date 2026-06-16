@@ -1,0 +1,6 @@
+version: 2.0
+shards:
+  jargon:
+    path: ../jargon
+    version: 0.19.1
+
