@@ -3,15 +3,36 @@ require "./store"
 require "./money"
 
 module Finfry
-  # Wires the Jargon-defined CLI to the `Store` and renders output.
+  # Wires the Jargon-defined CLI to the `Store` and renders output. Every entry
+  # path (manual commands now, the AI layer later) funnels through `commit` and
+  # `render`, so the ledger logic lives here rather than in the CLI handlers.
   class App
     def initialize(@store : Store = Store.new)
     end
 
     def run(argv : Array(String)) : Nil
       cli.run(argv) { |result| dispatch(result) }
-    rescue ex : Money::Error
+    rescue ex : Money::Error | Error
       abort_with(ex.message)
+    end
+
+    # --- shared core (also used by the future AI/REPL layer) -------------
+
+    # Validate, persist, and echo a transaction. The single commit path.
+    def commit(date : String, description : String, postings : Array(Posting)) : Transaction
+      validate_date!(date)
+      txn = @store.record(date, description, postings)
+      puts "Recorded ##{txn.id}:"
+      puts render(txn)
+      txn
+    end
+
+    # Human-readable rendering of a transaction's postings.
+    def render(txn : Transaction) : String
+      width = txn.postings.max_of { |p| p.account.size }
+      txn.postings.map { |p|
+        "    %-#{width}s  %12s" % {p.account, Money.format(p.amount)}
+      }.join("\n")
     end
 
     # --- CLI definition --------------------------------------------------
@@ -19,33 +40,83 @@ module Finfry
     private def cli : Jargon::CLI
       cli = Jargon.new("finfry")
 
+      cli.subcommand "spend", yaml: <<-YAML
+        type: object
+        description: Record an expense
+        positional: [amount, account]
+        properties:
+          amount: {type: string, description: "Amount, e.g. 50 or 12.50"}
+          account: {type: string, description: "Expense account, e.g. Expenses:Food:Coffee"}
+          from: {type: string, short: f, description: "Account paid from", default: #{DEFAULT_ASSET_ACCOUNT}}
+          description: {type: string, short: m, description: "Note", default: ""}
+          date: {type: string, short: d, description: "Date YYYY-MM-DD (default today)"}
+        required: [amount, account]
+        YAML
+
+      cli.subcommand "earn", yaml: <<-YAML
+        type: object
+        description: Record income
+        positional: [amount, account]
+        properties:
+          amount: {type: string, description: "Amount received"}
+          account: {type: string, description: "Income account, e.g. Income:Salary"}
+          to: {type: string, short: t, description: "Account received into", default: #{DEFAULT_ASSET_ACCOUNT}}
+          description: {type: string, short: m, description: "Note", default: ""}
+          date: {type: string, short: d, description: "Date YYYY-MM-DD (default today)"}
+        required: [amount, account]
+        YAML
+
+      cli.subcommand "transfer", yaml: <<-YAML
+        type: object
+        description: Move money between two accounts
+        positional: [amount]
+        properties:
+          amount: {type: string, description: "Amount to move"}
+          from: {type: string, short: f, description: "Source account"}
+          to: {type: string, short: t, description: "Destination account"}
+          description: {type: string, short: m, description: "Note", default: ""}
+          date: {type: string, short: d, description: "Date YYYY-MM-DD (default today)"}
+        required: [amount, from, to]
+        YAML
+
       cli.subcommand "add", yaml: <<-YAML
         type: object
-        description: Record an expense (or income with --income)
-        positional: [amount, description]
+        description: Record a transaction with arbitrary postings (splits)
+        positional: [posts]
         properties:
-          amount: {type: string, description: "Amount, e.g. 12.50"}
-          description: {type: string, description: "What it was for", default: ""}
-          category: {type: string, short: c, description: "Category", default: uncategorized}
-          date: {type: string, short: d, description: "Date as YYYY-MM-DD (default today)"}
-          income: {type: boolean, description: "Record as income instead of an expense"}
-        required: [amount]
+          posts: {type: array, description: "ACCOUNT AMOUNT pairs; a trailing lone ACCOUNT is inferred to balance"}
+          description: {type: string, short: m, description: "Note", default: ""}
+          date: {type: string, short: d, description: "Date YYYY-MM-DD (default today)"}
+        required: [posts]
         YAML
 
       cli.subcommand "list", yaml: <<-YAML
         type: object
-        description: List recorded transactions
+        description: List transactions
         properties:
-          category: {type: string, short: c, description: "Only this category"}
+          account: {type: string, short: a, description: "Only transactions touching this account subtree"}
           month: {type: string, short: m, description: "Only this month (YYYY-MM)"}
           limit: {type: integer, short: n, description: "Show only the most recent N"}
         YAML
 
+      cli.subcommand "balance", yaml: <<-YAML
+        type: object
+        description: Show account balances
+        positional: [prefix]
+        properties:
+          prefix: {type: string, description: "Limit to this account subtree"}
+        YAML
+
       cli.subcommand "report", yaml: <<-YAML
         type: object
-        description: Summarize a month by category
+        description: Income statement for a month
         properties:
           month: {type: string, short: m, description: "Month as YYYY-MM (default current)"}
+        YAML
+
+      cli.subcommand "accounts", yaml: <<-YAML
+        type: object
+        description: List all accounts in use
         YAML
 
       cli.subcommand "delete", yaml: <<-YAML
@@ -60,12 +131,12 @@ module Finfry
       budget = Jargon.new("budget")
       budget.subcommand "set", yaml: <<-YAML
         type: object
-        description: Set a monthly budget for a category
-        positional: [category, amount]
+        description: Set a monthly budget for an account
+        positional: [account, amount]
         properties:
-          category: {type: string}
-          amount: {type: string, description: "Monthly limit, e.g. 400"}
-        required: [category, amount]
+          account: {type: string, description: "Expense account, e.g. Expenses:Food"}
+          amount: {type: string, description: "Monthly limit"}
+        required: [account, amount]
         YAML
       budget.subcommand "list", yaml: <<-YAML
         type: object
@@ -75,11 +146,11 @@ module Finfry
         YAML
       budget.subcommand "rm", yaml: <<-YAML
         type: object
-        description: Remove a category's budget
-        positional: [category]
+        description: Remove an account's budget
+        positional: [account]
         properties:
-          category: {type: string}
-        required: [category]
+          account: {type: string}
+        required: [account]
         YAML
       cli.subcommand "budget", budget
 
@@ -90,9 +161,14 @@ module Finfry
 
     private def dispatch(result : Jargon::Result) : Nil
       case result.subcommand
+      when "spend"       then cmd_spend(result)
+      when "earn"        then cmd_earn(result)
+      when "transfer"    then cmd_transfer(result)
       when "add"         then cmd_add(result)
       when "list"        then cmd_list(result)
+      when "balance"     then cmd_balance(result)
       when "report"      then cmd_report(result)
+      when "accounts"    then cmd_accounts(result)
       when "delete"      then cmd_delete(result)
       when "budget set"  then cmd_budget_set(result)
       when "budget list" then cmd_budget_list(result)
@@ -102,35 +178,64 @@ module Finfry
       end
     end
 
-    # --- commands --------------------------------------------------------
+    # --- entry commands --------------------------------------------------
+
+    private def cmd_spend(r : Jargon::Result) : Nil
+      amount = Money.parse(r["amount"].as_s)
+      account = r["account"].as_s
+      from = r["from"]?.try(&.as_s) || DEFAULT_ASSET_ACCOUNT
+      commit(date_of(r), desc_of(r), [Posting.new(account, amount), Posting.new(from, -amount)])
+    end
+
+    private def cmd_earn(r : Jargon::Result) : Nil
+      amount = Money.parse(r["amount"].as_s)
+      account = r["account"].as_s
+      to = r["to"]?.try(&.as_s) || DEFAULT_ASSET_ACCOUNT
+      commit(date_of(r), desc_of(r), [Posting.new(to, amount), Posting.new(account, -amount)])
+    end
+
+    private def cmd_transfer(r : Jargon::Result) : Nil
+      amount = Money.parse(r["amount"].as_s)
+      from = r["from"].as_s
+      to = r["to"].as_s
+      commit(date_of(r), desc_of(r), [Posting.new(to, amount), Posting.new(from, -amount)])
+    end
 
     private def cmd_add(r : Jargon::Result) : Nil
-      amount = Money.parse(r["amount"].as_s)
-      kind = (r["income"]?.try(&.as_bool) || false) ? "income" : "expense"
-      date = (r["date"]?.try(&.as_s)) || today
-      validate_date!(date)
-
-      txn = @store.add_transaction(
-        date: date,
-        amount: amount,
-        category: r["category"]?.try(&.as_s) || "uncategorized",
-        description: r["description"]?.try(&.as_s) || "",
-        kind: kind,
-      )
-
-      verb = txn.income? ? "income" : "expense"
-      puts "Added #{verb} ##{txn.id}: #{Money.format(txn.amount)} [#{txn.category}] on #{txn.date}"
+      tokens = r["posts"].as_a.map(&.as_s)
+      commit(date_of(r), desc_of(r), parse_postings(tokens))
     end
+
+    # ACCOUNT AMOUNT pairs, with an optional final lone ACCOUNT whose amount is
+    # inferred so the transaction balances.
+    private def parse_postings(tokens : Array(String)) : Array(Posting)
+      raise Error.new("need at least one ACCOUNT AMOUNT pair") if tokens.size < 2
+
+      omitted = tokens.size.odd? ? tokens.last : nil
+      pairs = omitted ? tokens[0...-1] : tokens
+
+      postings = [] of Posting
+      i = 0
+      while i < pairs.size
+        postings << Posting.new(pairs[i], Money.parse(pairs[i + 1]))
+        i += 2
+      end
+      if account = omitted
+        postings << Posting.new(account, -postings.sum(&.amount))
+      end
+      postings
+    end
+
+    # --- reports ---------------------------------------------------------
 
     private def cmd_list(r : Jargon::Result) : Nil
       txns = @store.transactions
-      if cat = r["category"]?.try(&.as_s)
-        txns = txns.select { |t| t.category == cat }
+      if account = r["account"]?.try(&.as_s)
+        txns = txns.select(&.touches?(account))
       end
       if month = r["month"]?.try(&.as_s)
         txns = txns.select(&.in_month?(month))
       end
-
       txns = txns.sort_by { |t| {t.date, t.id} }
       if limit = r["limit"]?.try(&.as_i)
         txns = txns.last(limit)
@@ -141,15 +246,31 @@ module Finfry
         return
       end
 
-      puts "%-4s  %-10s  %12s  %-14s  %s" % {"ID", "DATE", "AMOUNT", "CATEGORY", "DESCRIPTION"}
       txns.each do |t|
-        amount = (t.income? ? "+" : "-") + Money.format(t.amount)
-        puts "%-4d  %-10s  %12s  %-14s  %s" % {t.id, t.date, amount, t.category, t.description}
+        header = "##{t.id}  #{t.date}"
+        header += "  #{t.description}" unless t.description.empty?
+        puts header
+        puts render(t)
+      end
+    end
+
+    private def cmd_balance(r : Jargon::Result) : Nil
+      prefix = r["prefix"]?.try(&.as_s)
+      balances = @store.balances(prefix)
+
+      if balances.empty?
+        puts "No balances to show."
+        return
+      end
+
+      width = balances.keys.max_of(&.size)
+      balances.to_a.sort_by { |(account, _)| account }.each do |(account, cents)|
+        puts "%-#{width}s  %14s" % {account, Money.format(display_cents(account, cents))}
       end
     end
 
     private def cmd_report(r : Jargon::Result) : Nil
-      month = (r["month"]?.try(&.as_s)) || current_month
+      month = r["month"]?.try(&.as_s) || current_month
       validate_month!(month)
       txns = @store.transactions.select(&.in_month?(month))
 
@@ -158,77 +279,111 @@ module Finfry
         return
       end
 
-      by_category = Hash(String, Int64).new(0_i64)
-      income = 0_i64
+      income = Hash(String, Int64).new(0_i64)
+      expenses = Hash(String, Int64).new(0_i64)
       txns.each do |t|
-        if t.expense?
-          by_category[t.category] += t.amount
-        else
-          income += t.amount
+        t.postings.each do |p|
+          income[p.account] += p.amount if p.account.starts_with?("Income")
+          expenses[p.account] += p.amount if p.account.starts_with?("Expenses")
         end
       end
 
-      expenses = by_category.values.sum(0_i64)
+      total_income = -income.values.sum(0_i64) # Income is credit-normal
+      total_expenses = expenses.values.sum(0_i64)
 
-      puts "Report for #{month}"
-      puts "─" * 34
-      by_category.to_a.sort_by { |(_, v)| -v }.each do |(cat, amt)|
-        puts "%-20s  %12s" % {cat, Money.format(amt)}
+      puts "Income statement for #{month}"
+      puts "─" * 40
+      puts "Income"
+      print_account_lines(income, flip: true)
+      puts "%-26s  %12s" % {"  Total income", Money.format(total_income)}
+      puts "Expenses"
+      print_account_lines(expenses, flip: false)
+      puts "%-26s  %12s" % {"  Total expenses", Money.format(total_expenses)}
+      puts "─" * 40
+      puts "%-26s  %12s" % {"Net", Money.format(total_income - total_expenses)}
+    end
+
+    private def print_account_lines(accounts : Hash(String, Int64), flip : Bool) : Nil
+      accounts.to_a.sort_by { |(_, cents)| flip ? cents : -cents }.each do |(account, cents)|
+        amount = flip ? -cents : cents
+        puts "  %-24s  %12s" % {account, Money.format(amount)}
       end
-      puts "─" * 34
-      puts "%-20s  %12s" % {"Expenses", Money.format(expenses)}
-      puts "%-20s  %12s" % {"Income", Money.format(income)}
-      puts "%-20s  %12s" % {"Net", Money.format(income - expenses)}
+    end
+
+    private def cmd_accounts(r : Jargon::Result) : Nil
+      accounts = @store.accounts
+      if accounts.empty?
+        puts "No accounts yet."
+      else
+        accounts.each { |a| puts a }
+      end
     end
 
     private def cmd_delete(r : Jargon::Result) : Nil
       id = r["id"].as_i
       if txn = @store.delete_transaction(id)
-        puts "Deleted ##{txn.id}: #{Money.format(txn.amount)} [#{txn.category}]"
+        puts "Deleted ##{txn.id}: #{txn.description}"
       else
         abort_with("no transaction with id #{id}")
       end
     end
 
+    # --- budgets ---------------------------------------------------------
+
     private def cmd_budget_set(r : Jargon::Result) : Nil
-      category = r["category"].as_s
+      account = r["account"].as_s
       limit = Money.parse(r["amount"].as_s)
-      @store.set_budget(category, limit)
-      puts "Budget for #{category} set to #{Money.format(limit)}/month"
+      @store.set_budget(account, limit)
+      puts "Budget for #{account} set to #{Money.format(limit)}/month"
     end
 
     private def cmd_budget_list(r : Jargon::Result) : Nil
-      month = (r["month"]?.try(&.as_s)) || current_month
+      month = r["month"]?.try(&.as_s) || current_month
       validate_month!(month)
       budgets = @store.budgets
 
       if budgets.empty?
-        puts "No budgets set. Use 'finfry budget set <category> <amount>'."
+        puts "No budgets set. Use 'finfry budget set <account> <amount>'."
         return
       end
 
       puts "Budgets for #{month}"
-      puts "%-14s  %12s  %12s  %12s" % {"CATEGORY", "SPENT", "LIMIT", "REMAINING"}
-      budgets.to_a.sort_by { |(cat, _)| cat }.each do |(cat, limit)|
-        spent = @store.spent(cat, month)
+      puts "%-22s  %12s  %12s  %12s" % {"ACCOUNT", "SPENT", "LIMIT", "REMAINING"}
+      budgets.to_a.sort_by { |(account, _)| account }.each do |(account, limit)|
+        spent = @store.spent(account, month)
         remaining = limit - spent
         flag = remaining < 0 ? "  OVER" : ""
-        puts "%-14s  %12s  %12s  %12s%s" % {
-          cat, Money.format(spent), Money.format(limit), Money.format(remaining), flag,
+        puts "%-22s  %12s  %12s  %12s%s" % {
+          account, Money.format(spent), Money.format(limit), Money.format(remaining), flag,
         }
       end
     end
 
     private def cmd_budget_rm(r : Jargon::Result) : Nil
-      category = r["category"].as_s
-      if @store.remove_budget(category)
-        puts "Removed budget for #{category}"
+      account = r["account"].as_s
+      if @store.remove_budget(account)
+        puts "Removed budget for #{account}"
       else
-        abort_with("no budget set for #{category}")
+        abort_with("no budget set for #{account}")
       end
     end
 
     # --- helpers ---------------------------------------------------------
+
+    private def date_of(r : Jargon::Result) : String
+      r["date"]?.try(&.as_s) || today
+    end
+
+    private def desc_of(r : Jargon::Result) : String
+      r["description"]?.try(&.as_s) || ""
+    end
+
+    # Income/Liabilities/Equity are credit-normal; flip their sign so reports
+    # read as positive numbers.
+    private def display_cents(account : String, cents : Int64) : Int64
+      credit_normal = {"Income", "Liabilities", "Equity"}.any? { |p| account.starts_with?(p) }
+      credit_normal ? -cents : cents
+    end
 
     private def today : String
       Time.local.to_s("%Y-%m-%d")
@@ -240,13 +395,13 @@ module Finfry
 
     private def validate_date!(date : String) : Nil
       unless date =~ /\A\d{4}-\d{2}-\d{2}\z/
-        abort_with("invalid date #{date.inspect} (expected YYYY-MM-DD)")
+        raise Error.new("invalid date #{date.inspect} (expected YYYY-MM-DD)")
       end
     end
 
     private def validate_month!(month : String) : Nil
       unless month =~ /\A\d{4}-\d{2}\z/
-        abort_with("invalid month #{month.inspect} (expected YYYY-MM)")
+        raise Error.new("invalid month #{month.inspect} (expected YYYY-MM)")
       end
     end
 

@@ -43,54 +43,135 @@ describe Finfry::Money do
     it "formats negatives" do
       Finfry::Money.format(-399_i64).should eq("-$3.99")
     end
+  end
+end
 
-    it "round-trips with parse" do
-      Finfry::Money.format(Finfry::Money.parse("1,000.00")).should eq("$1,000.00")
-    end
+describe Finfry::Transaction do
+  it "is balanced when postings sum to zero" do
+    txn = Finfry::Transaction.new(1, "2026-06-01", "x", [
+      Finfry::Posting.new("Expenses:Food", 500_i64),
+      Finfry::Posting.new("Assets:Checking", -500_i64),
+    ])
+    txn.balanced?.should be_true
+  end
+
+  it "is unbalanced otherwise" do
+    txn = Finfry::Transaction.new(1, "2026-06-01", "x", [
+      Finfry::Posting.new("Expenses:Food", 500_i64),
+      Finfry::Posting.new("Assets:Checking", -400_i64),
+    ])
+    txn.balanced?.should be_false
+    txn.imbalance.should eq(100_i64)
+  end
+
+  it "respects the colon boundary when matching subtrees" do
+    txn = Finfry::Transaction.new(1, "2026-06-01", "x", [
+      Finfry::Posting.new("Expenses:Food:Coffee", 500_i64),
+      Finfry::Posting.new("Assets:Checking", -500_i64),
+    ])
+    txn.touches?("Expenses:Food").should be_true # parent matches descendant
+    txn.touches?("Expenses:Foo").should be_false # not a colon-boundary prefix
   end
 end
 
 describe Finfry::Store do
-  it "adds transactions with incrementing ids and persists them" do
+  it "records balanced transactions with incrementing ids and persists them" do
     with_store do |store|
-      a = store.add_transaction("2026-06-01", 500_i64, "food", "lunch", "expense")
-      b = store.add_transaction("2026-06-02", 1000_i64, "food", "dinner", "expense")
+      a = store.record("2026-06-01", "lunch", expense("Expenses:Food", 500))
+      b = store.record("2026-06-02", "dinner", expense("Expenses:Food", 1000))
       a.id.should eq(1)
       b.id.should eq(2)
 
-      reloaded = Finfry::Store.new(store.path)
-      reloaded.transactions.size.should eq(2)
+      Finfry::Store.new(store.path).transactions.size.should eq(2)
     end
   end
 
-  it "deletes by id" do
+  it "rejects unbalanced transactions" do
     with_store do |store|
-      store.add_transaction("2026-06-01", 500_i64, "food", "lunch", "expense")
-      store.delete_transaction(1).try(&.id).should eq(1)
-      store.delete_transaction(1).should be_nil
-      store.transactions.should be_empty
+      expect_raises(Finfry::Error, /balance/) do
+        store.record("2026-06-01", "bad", [
+          Finfry::Posting.new("Expenses:Food", 500_i64),
+          Finfry::Posting.new("Assets:Checking", -400_i64),
+        ])
+      end
     end
   end
 
-  it "sums spending per category within a month" do
+  it "computes balances with subtree rollup and sign" do
     with_store do |store|
-      store.add_transaction("2026-06-01", 500_i64, "food", "", "expense")
-      store.add_transaction("2026-06-20", 700_i64, "food", "", "expense")
-      store.add_transaction("2026-07-01", 999_i64, "food", "", "expense")
-      store.add_transaction("2026-06-05", 300_i64, "food", "", "income") # ignored
+      store.record("2026-06-01", "", expense("Expenses:Food:Coffee", 500))
+      store.record("2026-06-02", "", expense("Expenses:Food:Snacks", 300))
 
-      store.spent("food", "2026-06").should eq(1200_i64)
+      all = store.balances
+      all["Expenses:Food:Coffee"].should eq(500_i64)
+      all["Assets:Checking"].should eq(-800_i64)
+
+      store.balances("Expenses:Food").values.sum.should eq(800_i64)
+    end
+  end
+
+  it "sums spending into an account subtree within a month" do
+    with_store do |store|
+      store.record("2026-06-01", "", expense("Expenses:Food:Coffee", 500))
+      store.record("2026-06-20", "", expense("Expenses:Food:Snacks", 700))
+      store.record("2026-07-01", "", expense("Expenses:Food:Coffee", 999))
+
+      store.spent("Expenses:Food", "2026-06").should eq(1200_i64)
+    end
+  end
+
+  it "lists distinct accounts" do
+    with_store do |store|
+      store.record("2026-06-01", "", expense("Expenses:Food", 500))
+      store.accounts.should eq(["Assets:Checking", "Expenses:Food"])
     end
   end
 
   it "stores and removes budgets" do
     with_store do |store|
-      store.set_budget("food", 40000_i64)
-      store.budgets["food"].should eq(40000_i64)
-      store.remove_budget("food").should be_true
-      store.remove_budget("food").should be_false
+      store.set_budget("Expenses:Food", 40000_i64)
+      store.budgets["Expenses:Food"].should eq(40000_i64)
+      store.remove_budget("Expenses:Food").should be_true
+      store.remove_budget("Expenses:Food").should be_false
     end
   end
+
+  it "migrates a legacy single-entry ledger and backs it up" do
+    path = File.tempname("finfry_legacy", ".json")
+    File.write(path, {
+      "next_id"      => 3,
+      "transactions" => [
+        {"id" => 1, "date" => "2026-05-01", "amount" => 1250, "category" => "food", "description" => "coffee", "kind" => "expense"},
+        {"id" => 2, "date" => "2026-05-01", "amount" => 300000, "category" => "salary", "description" => "pay", "kind" => "income"},
+      ],
+      "budgets" => {"food" => 40000},
+    }.to_json)
+
+    begin
+      store = Finfry::Store.new(path)
+      File.exists?("#{path}.bak").should be_true # original preserved
+      store.db.next_id.should eq(3)
+
+      balances = store.balances
+      balances["Expenses:food"].should eq(1250_i64)
+      balances["Income:salary"].should eq(-300000_i64)
+      balances["Assets:Checking"].should eq(298750_i64)
+      store.budgets["Expenses:food"].should eq(40000_i64)
+
+      store.transactions.all?(&.balanced?).should be_true
+    ensure
+      File.delete(path) if File.exists?(path)
+      File.delete("#{path}.bak") if File.exists?("#{path}.bak")
+    end
+  end
+end
+
+# A balanced expense posting pair paid from Assets:Checking.
+def expense(account : String, cents : Int32) : Array(Finfry::Posting)
+  [
+    Finfry::Posting.new(account, cents.to_i64),
+    Finfry::Posting.new("Assets:Checking", -cents.to_i64),
+  ]
 end
 
 # Runs the block with a Store backed by a throwaway temp file.

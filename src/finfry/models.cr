@@ -1,42 +1,65 @@
 require "json"
 
 module Finfry
-  # A single recorded expense or income entry. Amounts are always stored as a
-  # positive number of cents; `kind` distinguishes the direction.
+  # Default account money is paid from / received into when not specified.
+  DEFAULT_ASSET_ACCOUNT = "Assets:Checking"
+
+  # Raised for user-facing domain errors (unbalanced postings, etc.).
+  class Error < Exception
+  end
+
+  # True if `account` is `prefix` itself or a descendant of it. Accounts are
+  # hierarchical, colon-separated ("Expenses:Food:Coffee"), so a prefix match
+  # must respect the ":" boundary — "Expenses:Foodie" is not under "Expenses:Food".
+  def self.in_subtree?(account : String, prefix : String) : Bool
+    account == prefix || account.starts_with?("#{prefix}:")
+  end
+
+  # One leg of a double-entry transaction: a signed amount applied to an account.
+  struct Posting
+    include JSON::Serializable
+
+    property account : String
+    property amount : Int64 # signed cents
+
+    def initialize(@account, @amount)
+    end
+  end
+
+  # A double-entry transaction: a dated, described set of postings whose signed
+  # amounts must sum to zero.
   struct Transaction
     include JSON::Serializable
 
     getter id : Int32
-    property date : String  # ISO date, "YYYY-MM-DD"
-    property amount : Int64 # cents, always positive
-    property category : String
+    property date : String # YYYY-MM-DD
     property description : String
-    property kind : String # "expense" | "income"
+    property postings : Array(Posting)
 
-    def initialize(@id, @date, @amount, @category, @description, @kind = "expense")
+    def initialize(@id, @date, @description, @postings)
     end
 
-    def expense? : Bool
-      kind == "expense"
+    # Sum of all posting amounts; zero for a balanced transaction.
+    def imbalance : Int64
+      postings.sum(&.amount)
     end
 
-    def income? : Bool
-      kind == "income"
+    def balanced? : Bool
+      imbalance.zero?
     end
 
-    # Signed value: income is positive, expense negative. Useful for net totals.
-    def signed_amount : Int64
-      income? ? amount : -amount
+    # True if any posting touches `account` or one of its descendants.
+    def touches?(account : String) : Bool
+      postings.any? { |p| Finfry.in_subtree?(p.account, account) }
     end
 
-    # True if this transaction falls within the given "YYYY-MM" month.
     def in_month?(month : String) : Bool
       date.starts_with?(month)
     end
   end
 
-  # The full persisted state of the app: an id counter, all transactions, and
-  # per-category monthly budget limits (in cents).
+  # The full persisted state: an id counter, all transactions, and per-account
+  # monthly budget limits (cents).
   class Database
     include JSON::Serializable
 

@@ -1,9 +1,12 @@
 require "json"
 require "./models"
+require "./money"
 
 module Finfry
   # Persists the `Database` to a single JSON file under the user's XDG data
-  # directory (override with `FINFRY_DATA` for tests or alternate ledgers).
+  # directory (override with `FINFRY_DATA`). Writes are atomic (temp file +
+  # rename) so a crash mid-write can't corrupt the ledger. Legacy single-entry
+  # files are migrated to double-entry on load, keeping a `.bak` backup.
   class Store
     getter path : String
     getter db : Database
@@ -23,21 +26,80 @@ module Finfry
 
     private def load : Database
       return Database.new unless File.exists?(@path)
-      Database.from_json(File.read(@path))
+
+      raw = JSON.parse(File.read(@path))
+      if legacy?(raw)
+        backup!
+        db = migrate(raw)
+        write(db)
+        db
+      else
+        Database.from_json(raw.to_json)
+      end
     rescue ex : JSON::ParseException
-      raise Exception.new("ledger at #{@path} is corrupt: #{ex.message}")
+      raise Error.new("ledger at #{@path} is corrupt: #{ex.message}")
     end
 
+    # --- persistence -----------------------------------------------------
+
     def save : Nil
+      write(@db)
+    end
+
+    private def write(db : Database) : Nil
       Dir.mkdir_p(File.dirname(@path))
-      File.write(@path, @db.to_pretty_json)
+      tmp = "#{@path}.tmp"
+      File.write(tmp, db.to_pretty_json)
+      File.rename(tmp, @path) # atomic on the same filesystem
+    end
+
+    private def backup! : Nil
+      File.copy(@path, "#{@path}.bak")
+    end
+
+    # --- legacy migration ------------------------------------------------
+
+    # Old format stored each transaction with flat `amount`/`category`/`kind`
+    # fields and no `postings`.
+    private def legacy?(raw : JSON::Any) : Bool
+      first = raw["transactions"]?.try(&.as_a?).try(&.first?).try(&.as_h?)
+      return false unless first
+      first.has_key?("kind") && !first.has_key?("postings")
+    end
+
+    private def migrate(raw : JSON::Any) : Database
+      db = Database.new
+      db.next_id = raw["next_id"]?.try(&.as_i?) || 1
+
+      raw["transactions"].as_a.each do |t|
+        amount = t["amount"].as_i64
+        category = t["category"].as_s
+        postings =
+          if t["kind"].as_s == "income"
+            [Posting.new(DEFAULT_ASSET_ACCOUNT, amount), Posting.new("Income:#{category}", -amount)]
+          else
+            [Posting.new("Expenses:#{category}", amount), Posting.new(DEFAULT_ASSET_ACCOUNT, -amount)]
+          end
+        db.transactions << Transaction.new(t["id"].as_i, t["date"].as_s, t["description"].as_s, postings)
+      end
+
+      raw["budgets"]?.try(&.as_h?).try &.each do |category, limit|
+        db.budgets["Expenses:#{category}"] = limit.as_i64
+      end
+
+      db
     end
 
     # --- mutations -------------------------------------------------------
 
-    def add_transaction(date : String, amount : Int64, category : String,
-                        description : String, kind : String) : Transaction
-      txn = Transaction.new(@db.next_id, date, amount, category, description, kind)
+    # Build, validate, persist, and return a transaction. Raises `Error` if the
+    # postings don't balance.
+    def record(date : String, description : String, postings : Array(Posting)) : Transaction
+      txn = Transaction.new(@db.next_id, date, description, postings)
+      unless txn.balanced?
+        raise Error.new("postings do not balance (off by #{Money.format(txn.imbalance)})")
+      end
+
       @db.next_id += 1
       @db.transactions << txn
       save
@@ -53,13 +115,13 @@ module Finfry
       txn
     end
 
-    def set_budget(category : String, limit : Int64) : Nil
-      @db.budgets[category] = limit
+    def set_budget(account : String, limit : Int64) : Nil
+      @db.budgets[account] = limit
       save
     end
 
-    def remove_budget(category : String) : Bool
-      removed = @db.budgets.delete(category)
+    def remove_budget(account : String) : Bool
+      removed = @db.budgets.delete(account)
       save unless removed.nil?
       !removed.nil?
     end
@@ -74,10 +136,34 @@ module Finfry
       @db.budgets
     end
 
-    # Total expense (cents) for a category within a "YYYY-MM" month.
-    def spent(category : String, month : String) : Int64
+    # Net balance of every account (optionally restricted to a subtree, and/or
+    # to transactions on or before `up_to`). Returns account => signed cents.
+    def balances(prefix : String? = nil, up_to : String? = nil) : Hash(String, Int64)
+      result = Hash(String, Int64).new(0_i64)
+      @db.transactions.each do |t|
+        next if up_to && t.date > up_to
+        t.postings.each do |p|
+          next if prefix && !Finfry.in_subtree?(p.account, prefix)
+          result[p.account] += p.amount
+        end
+      end
+      result
+    end
+
+    # Every distinct account name ever used, sorted. Feeds completions and (later)
+    # the AI's chart-of-accounts context.
+    def accounts : Array(String)
+      names = Set(String).new
+      @db.transactions.each { |t| t.postings.each { |p| names << p.account } }
+      names.to_a.sort
+    end
+
+    # Net movement into an account subtree within a "YYYY-MM" month. For an
+    # Expenses account this is the amount spent.
+    def spent(account : String, month : String) : Int64
       @db.transactions.sum(0_i64) do |t|
-        t.expense? && t.category == category && t.in_month?(month) ? t.amount : 0_i64
+        next 0_i64 unless t.in_month?(month)
+        t.postings.sum(0_i64) { |p| Finfry.in_subtree?(p.account, account) ? p.amount : 0_i64 }
       end
     end
   end
