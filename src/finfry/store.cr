@@ -121,6 +121,60 @@ module Finfry
       save
     end
 
+    # --- chart of accounts ----------------------------------------------
+
+    def account_policy : String
+      @db.account_policy
+    end
+
+    def set_account_policy(policy : String) : Nil
+      @db.account_policy = policy
+      save
+    end
+
+    # Declare an account in the chart. Returns false if already declared.
+    def declare_account(name : String) : Bool
+      return false if @db.accounts.includes?(name)
+      @db.accounts << name
+      save
+      true
+    end
+
+    # Remove an account from the chart. Returns false if it wasn't declared.
+    # (If postings still reference it, it stays "known" via use.)
+    def undeclare_account(name : String) : Bool
+      removed = @db.accounts.delete(name)
+      save unless removed.nil?
+      !removed.nil?
+    end
+
+    # Rewrite every posting on `from` to `to` (also updating the chart and any
+    # budget keyed on it). Doubles as a merge when `to` already exists. Returns
+    # the number of postings rewritten.
+    def rename_account(from : String, to : String) : Int32
+      count = 0
+      @db.transactions.each do |t|
+        t.postings.map! do |p|
+          if p.account == from
+            count += 1
+            Posting.new(to, p.amount)
+          else
+            p
+          end
+        end
+      end
+
+      if @db.accounts.delete(from)
+        @db.accounts << to unless @db.accounts.includes?(to)
+      end
+      if limit = @db.budgets.delete(from)
+        @db.budgets[to] = limit
+      end
+
+      save
+      count
+    end
+
     def remove_budget(account : String) : Bool
       removed = @db.budgets.delete(account)
       save unless removed.nil?
@@ -151,12 +205,26 @@ module Finfry
       result
     end
 
-    # Every distinct account name ever used, sorted. Feeds completions and (later)
-    # the AI's chart-of-accounts context.
-    def accounts : Array(String)
+    # Accounts explicitly declared in the chart.
+    def declared_accounts : Array(String)
+      @db.accounts
+    end
+
+    # Every distinct account a posting actually references, sorted.
+    def used_accounts : Array(String)
       names = Set(String).new
       @db.transactions.each { |t| t.postings.each { |p| names << p.account } }
       names.to_a.sort
+    end
+
+    # Declared ∪ used — the accounts finfry treats as known. Feeds the AI's
+    # chart context, the `accounts` listing, and completions.
+    def known_accounts : Array(String)
+      (@db.accounts + used_accounts).uniq.sort
+    end
+
+    def account_known?(name : String) : Bool
+      @db.accounts.includes?(name) || used_accounts.includes?(name)
     end
 
     # Net movement into an account subtree within a "YYYY-MM" month. For an

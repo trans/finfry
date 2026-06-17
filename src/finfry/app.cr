@@ -1,4 +1,5 @@
 require "jargon"
+require "levenshtein"
 require "./store"
 require "./money"
 require "./recurrence"
@@ -27,6 +28,7 @@ module Finfry
       if recurrence && !Recurrence.valid?(recurrence)
         raise Error.new("unknown recurrence #{recurrence.inspect} (one of: #{Recurrence.names.join(", ")})")
       end
+      enforce_account_policy!(postings)
 
       txn = @store.record(date, description, postings, recurrence)
       suffix = txn.recurrence ? " (#{txn.recurrence})" : ""
@@ -139,10 +141,45 @@ module Finfry
         description: Per-day cost of recurring items
         YAML
 
-      cli.subcommand "accounts", yaml: <<-YAML
+      accounts = Jargon.new("accounts")
+      accounts.subcommand "list", yaml: <<-YAML
         type: object
-        description: List all accounts in use
+        description: List known accounts (declared + used)
         YAML
+      accounts.subcommand "add", yaml: <<-YAML
+        type: object
+        description: Declare one or more accounts in the chart
+        positional: [names]
+        properties:
+          names: {type: array, description: "Account names, e.g. Expenses:Food:Coffee"}
+        required: [names]
+        YAML
+      accounts.subcommand "rm", yaml: <<-YAML
+        type: object
+        description: Remove an account from the chart
+        positional: [name]
+        properties:
+          name: {type: string}
+        required: [name]
+        YAML
+      accounts.subcommand "rename", yaml: <<-YAML
+        type: object
+        description: Rename an account everywhere (merges if the target exists)
+        positional: [from, to]
+        properties:
+          from: {type: string}
+          to: {type: string}
+        required: [from, to]
+        YAML
+      accounts.subcommand "policy", yaml: <<-YAML
+        type: object
+        description: Show or set how unknown accounts are handled (strict/guard/off)
+        positional: [mode]
+        properties:
+          mode: {type: string, enum: [strict, guard, off]}
+        YAML
+      accounts.default_subcommand("list")
+      cli.subcommand "accounts", accounts
 
       cli.subcommand "path", yaml: <<-YAML
         type: object
@@ -191,21 +228,25 @@ module Finfry
 
     private def dispatch(result : Jargon::Result) : Nil
       case result.subcommand
-      when "ai"          then cmd_ai(result)
-      when "spend"       then cmd_spend(result)
-      when "earn"        then cmd_earn(result)
-      when "transfer"    then cmd_transfer(result)
-      when "add"         then cmd_add(result)
-      when "list"        then cmd_list(result)
-      when "balance"     then cmd_balance(result)
-      when "report"      then cmd_report(result)
-      when "daily"       then cmd_daily(result)
-      when "accounts"    then cmd_accounts(result)
-      when "path"        then cmd_path(result)
-      when "delete"      then cmd_delete(result)
-      when "budget set"  then cmd_budget_set(result)
-      when "budget list" then cmd_budget_list(result)
-      when "budget rm"   then cmd_budget_rm(result)
+      when "ai"              then cmd_ai(result)
+      when "spend"           then cmd_spend(result)
+      when "earn"            then cmd_earn(result)
+      when "transfer"        then cmd_transfer(result)
+      when "add"             then cmd_add(result)
+      when "list"            then cmd_list(result)
+      when "balance"         then cmd_balance(result)
+      when "report"          then cmd_report(result)
+      when "daily"           then cmd_daily(result)
+      when "accounts list"   then cmd_accounts_list(result)
+      when "accounts add"    then cmd_accounts_add(result)
+      when "accounts rm"     then cmd_accounts_rm(result)
+      when "accounts rename" then cmd_accounts_rename(result)
+      when "accounts policy" then cmd_accounts_policy(result)
+      when "path"            then cmd_path(result)
+      when "delete"          then cmd_delete(result)
+      when "budget set"      then cmd_budget_set(result)
+      when "budget list"     then cmd_budget_list(result)
+      when "budget rm"       then cmd_budget_rm(result)
       else
         puts cli.help
       end
@@ -244,7 +285,7 @@ module Finfry
 
       intent = AI.from_env.extract(
         text,
-        accounts: @store.accounts,
+        accounts: @store.known_accounts,
         today: today,
         default_asset: DEFAULT_ASSET_ACCOUNT,
       )
@@ -252,10 +293,14 @@ module Finfry
       amount = Money.parse(intent.amount)
       recurrence = intent.recurrence_or_nil
       postings = Finfry.postings_for(intent.kind, amount, intent.account, intent.counter_account)
+      new_accounts = postings.map(&.account).uniq.reject { |a| @store.account_known?(a) }
 
       suffix = recurrence ? " (#{recurrence})" : ""
       puts "Proposed#{suffix}: #{intent.date}  #{intent.description}"
       puts render(Transaction.new(0, intent.date, intent.description, postings, recurrence))
+      unless new_accounts.empty?
+        puts "New account#{new_accounts.size == 1 ? "" : "s"}: #{new_accounts.join(", ")}"
+      end
 
       unless r["yes"]?.try(&.as_bool)
         if piped || !STDIN.tty?
@@ -264,7 +309,45 @@ module Finfry
         return puts("Not recorded.") unless confirm?("Record this?")
       end
 
+      # Declare any new accounts the user just approved, so commit's policy check
+      # passes (this is the deliberate "yes" that strict mode requires).
+      new_accounts.each { |a| @store.declare_account(a) }
       commit(intent.date, intent.description, postings, recurrence)
+    end
+
+    # Enforce the unknown-account policy before recording. Strict rejects;
+    # guard prompts and declares on confirmation; off does nothing.
+    private def enforce_account_policy!(postings : Array(Posting)) : Nil
+      return if @store.account_policy == "off"
+      unknown = postings.map(&.account).uniq.reject { |a| @store.account_known?(a) }
+      return if unknown.empty?
+
+      if @store.account_policy == "strict"
+        raise Error.new(unknown_accounts_message(unknown))
+      else
+        unknown.each do |account|
+          hint = suggest_account(account)
+          question = hint ? "New account '#{account}' (did you mean '#{hint}'?). Create it?" : "New account '#{account}'. Create it?"
+          raise Error.new("cancelled — '#{account}' not recorded") unless confirm?(question)
+          @store.declare_account(account)
+        end
+      end
+    end
+
+    private def unknown_accounts_message(unknown : Array(String)) : String
+      lines = unknown.map do |account|
+        hint = suggest_account(account)
+        "  unknown account '#{account}'#{hint ? " (did you mean '#{hint}'?)" : ""}"
+      end
+      "#{lines.join("\n")}\n  declare it:  finfry accounts add #{unknown.join(" ")}"
+    end
+
+    # Closest known account within a small edit distance, advisory only.
+    private def suggest_account(name : String) : String?
+      known = @store.known_accounts
+      return nil if known.empty?
+      best = known.min_by { |candidate| Levenshtein.distance(name, candidate) }
+      Levenshtein.distance(name, best) <= name.size // 3 + 1 ? best : nil
     end
 
     private def confirm?(question : String) : Bool
@@ -434,12 +517,52 @@ module Finfry
       puts @store.path
     end
 
-    private def cmd_accounts(r : Jargon::Result) : Nil
-      accounts = @store.accounts
-      if accounts.empty?
+    private def cmd_accounts_list(r : Jargon::Result) : Nil
+      known = @store.known_accounts
+      if known.empty?
         puts "No accounts yet."
+        return
+      end
+      used = @store.used_accounts.to_set
+      known.each do |a|
+        puts used.includes?(a) ? a : "#{a}  (unused)"
+      end
+    end
+
+    private def cmd_accounts_add(r : Jargon::Result) : Nil
+      r["names"].as_a.map(&.as_s).each do |name|
+        if @store.declare_account(name)
+          puts "Added #{name}"
+        else
+          puts "#{name} already declared"
+        end
+      end
+    end
+
+    private def cmd_accounts_rm(r : Jargon::Result) : Nil
+      name = r["name"].as_s
+      if @store.undeclare_account(name)
+        msg = "Removed #{name} from the chart"
+        msg += " (still referenced by existing transactions)" if @store.used_accounts.includes?(name)
+        puts msg
       else
-        accounts.each { |a| puts a }
+        abort_with("#{name} is not in the chart")
+      end
+    end
+
+    private def cmd_accounts_rename(r : Jargon::Result) : Nil
+      from = r["from"].as_s
+      to = r["to"].as_s
+      count = @store.rename_account(from, to)
+      puts "Renamed #{from} → #{to} (#{count} posting#{count == 1 ? "" : "s"} rewritten)"
+    end
+
+    private def cmd_accounts_policy(r : Jargon::Result) : Nil
+      if mode = r["mode"]?.try(&.as_s)
+        @store.set_account_policy(mode)
+        puts "Account policy set to #{mode}"
+      else
+        puts "Account policy: #{@store.account_policy}"
       end
     end
 

@@ -120,10 +120,41 @@ describe Finfry::Store do
     end
   end
 
-  it "lists distinct accounts" do
+  it "lists distinct used accounts" do
     with_store do |store|
       store.record("2026-06-01", "", expense("Expenses:Food", 500))
-      store.accounts.should eq(["Assets:Checking", "Expenses:Food"])
+      store.used_accounts.should eq(["Assets:Checking", "Expenses:Food"])
+    end
+  end
+
+  it "treats declared and used accounts as known" do
+    with_store do |store|
+      store.declare_account("Expenses:Travel")
+      store.record("2026-06-01", "", expense("Expenses:Food", 500))
+      store.account_known?("Expenses:Travel").should be_true # declared
+      store.account_known?("Expenses:Food").should be_true   # used
+      store.account_known?("Expenses:Nope").should be_false
+    end
+  end
+
+  it "renames an account across postings and budgets" do
+    with_store do |store|
+      store.record("2026-06-01", "", expense("Expenses:Foood", 500))
+      store.set_budget("Expenses:Foood", 10000_i64)
+      count = store.rename_account("Expenses:Foood", "Expenses:Food")
+      count.should eq(1)
+      store.used_accounts.includes?("Expenses:Food").should be_true
+      store.used_accounts.includes?("Expenses:Foood").should be_false
+      store.budgets["Expenses:Food"].should eq(10000_i64)
+    end
+  end
+
+  it "defaults to the strict policy and seeds a starter chart on a new ledger" do
+    with_store do |store|
+      store.account_policy.should eq("strict")
+      store.declared_accounts.should contain("Assets:Checking")
+      store.set_account_policy("off")
+      Finfry::Store.new(store.path).account_policy.should eq("off")
     end
   end
 

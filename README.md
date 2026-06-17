@@ -27,6 +27,31 @@ Every transaction is a set of **postings** (an account + a signed amount) that
 sum to zero. You rarely write that by hand — the `spend`/`earn`/`transfer`
 commands build the balanced pair for you.
 
+### Chart of accounts
+
+An account is **known** if it's been declared in the chart or already used by a
+posting. A new ledger is seeded with a small starter chart (`Assets:Checking`,
+`Expenses:Food`, …). How finfry reacts to an *unknown* account is set per ledger:
+
+- **`strict`** (default) — recording to an unknown account is rejected; declare
+  it first with `finfry accounts add`. The error suggests close matches, so a
+  typo (`Expenses:Foood`) is caught instead of silently becoming a new account.
+- **`guard`** — prompts ("`Expenses:Foood` — did you mean `Expenses:Food`?
+  Create it? [y/N]") and declares it on confirmation.
+- **`off`** — any referenced account is created silently.
+
+```sh
+finfry accounts                         # list known accounts (declared + used)
+finfry accounts add Expenses:Food:Coffee Assets:Brokerage
+finfry accounts rename Expenses:Foood Expenses:Food   # rewrites postings; merges if target exists
+finfry accounts rm Assets:Brokerage     # remove from the chart
+finfry accounts policy guard            # strict | guard | off (no arg prints current)
+```
+
+The AI path respects the policy too: a proposal that introduces a new account
+shows it as `New account: …`, and your confirmation is the deliberate "yes" that
+declares it — even in strict mode.
+
 ### Sign convention
 
 Amounts are signed cents internally. `Assets`/`Expenses` are debit-normal

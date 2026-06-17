@@ -79,8 +79,30 @@ module Finfry
     end
   end
 
-  # The full persisted state: an id counter, all transactions, and per-account
-  # monthly budget limits (cents).
+  # Starter chart seeded into a brand-new ledger so strict mode is usable
+  # immediately. Existing ledgers are unaffected — `Database.from_json` falls
+  # back to the empty property default, and their known accounts come from the
+  # postings already recorded.
+  DEFAULT_CHART = %w[
+    Assets:Checking
+    Assets:Cash
+    Liabilities:CreditCard
+    Income:Salary
+    Expenses:Food
+    Expenses:Housing
+    Expenses:Transport
+    Expenses:Health
+    Expenses:Entertainment
+    Expenses:Misc
+  ]
+
+  # How finfry reacts to a posting naming an account that isn't yet "known"
+  # (declared in the chart or already used by a posting).
+  ACCOUNT_POLICIES = %w[strict guard off]
+
+  # The full persisted state: an id counter, all transactions, per-account
+  # monthly budget limits (cents), the declared chart of accounts, and the
+  # unknown-account policy.
   class Database
     include JSON::Serializable
 
@@ -88,7 +110,17 @@ module Finfry
     property transactions : Array(Transaction) = [] of Transaction
     property budgets : Hash(String, Int64) = {} of String => Int64
 
+    # Explicitly declared accounts (the chart). Empty by default so existing
+    # ledgers loaded via from_json aren't reseeded.
+    property accounts : Array(String) = [] of String
+
+    # "strict" | "guard" | "off"
+    property account_policy : String = "strict"
+
+    # Brand-new ledger only — seeds the starter chart. from_json does not call
+    # this, so deserialized ledgers keep whatever chart they had (or none).
     def initialize
+      @accounts = DEFAULT_CHART.dup
     end
   end
 end
