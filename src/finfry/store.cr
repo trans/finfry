@@ -225,18 +225,42 @@ module Finfry
       @db.changesets.any? { |c| c.reverses == id }
     end
 
-    # The most recent original (non-reversal) changeset not yet reversed.
-    def undoable : Changeset?
-      @db.changesets.reverse_each.find { |c| !c.reversal? && !reversed?(c.id) }
+    # Undo the most recent change by removing it outright — as if it never
+    # happened. Safe precisely because it's the last change: nothing follows it.
+    # Returns the removed changeset, or nil if there's nothing to undo.
+    def undo_last : Changeset?
+      cs = @db.changesets.last?
+      return nil unless cs
+
+      ids = cs.added_transaction_ids.to_set
+      @db.transactions.reject! { |t| ids.includes?(t.id) }
+      @db.next_id = cs.added_transaction_ids.min unless cs.added_transaction_ids.empty?
+
+      cs.budget_changes.each do |change|
+        if previous = change.previous
+          @db.budgets[change.account] = previous
+        else
+          @db.budgets.delete(change.account)
+        end
+      end
+
+      used = used_accounts.to_set
+      cs.declared_accounts.each { |a| @db.accounts.delete(a) unless used.includes?(a) }
+
+      @db.changesets.pop
+      @db.next_changeset_id -= 1 if cs.id == @db.next_changeset_id - 1
+      save
+      cs
     end
 
-    # Undo the most recent change the proper accounting way: append a reversing
-    # entry. The original is never removed — transactions it added are negated
-    # by mirror-image postings, and budget changes are restored. Returns the
-    # reversing changeset, or nil if there's nothing to undo.
-    def undo_last(at : String, date : String) : Changeset?
-      original = undoable
+    # Correct an *older* change the proper accounting way: append a reversing
+    # entry. The original is never removed — transactions it added are negated by
+    # mirror-image postings, budget changes restored. Returns the reversing
+    # changeset, nil if `id` is unknown, or raises if it's already reversed.
+    def reverse(id : Int32, at : String, date : String) : Changeset?
+      original = @db.changesets.find { |c| c.id == id }
       return nil unless original
+      raise Error.new("change ##{id} is already reversed") if reversed?(id)
 
       reversal = Changeset.new(0, at, "reverse ##{original.id}: #{original.summary}")
       reversal.reverses = original.id

@@ -52,14 +52,22 @@ The AI path respects the policy too: a proposal that introduces a new account
 shows it as `New account: …`, and your confirmation is the deliberate "yes" that
 declares it — even in strict mode.
 
-### Undo (reversing entries)
+### Undo & corrections
 
-`finfry undo` reverses the most recent change the way accountants do — it
-**appends a correcting entry**, it never deletes. Undoing a transaction posts a
-mirror-image transaction (`Reversal of #N`) so the two net to zero; the original
-stays in the ledger and the full audit trail is preserved. `finfry history`
-lists changes and marks which have been reversed. Repeated `undo` walks back
-through your changes, newest first.
+There are two ways to take something back, matching how bookkeeping actually
+works:
+
+- **`finfry undo`** removes the **most recent** change outright — as if it never
+  happened. Safe because nothing has been recorded on top of it yet (like
+  backspacing before it's part of the record). Repeated `undo` pops back through
+  recent changes.
+- **`finfry undo <id>`** corrects an **older** change (find the id with
+  `finfry history`) by posting a **reversing entry** — a mirror-image
+  transaction (`Reversal of #N`) so the two net to zero. The original is kept
+  and the audit trail is preserved, because you can't un-happen history that
+  later entries sit on top of.
+
+`finfry history` lists changes and marks which have been reversed.
 
 ### Sign convention
 
@@ -125,7 +133,8 @@ finfry report [-m 2026-06]                             # income statement
 finfry daily                                           # per-day cost of recurring items
 finfry accounts                                        # accounts in use
 finfry history [-n 10]                                 # change history
-finfry undo                                            # reverse the most recent change
+finfry undo                                            # remove the most recent change
+finfry undo 4                                          # reverse an older change (correcting entry)
 finfry path                                            # print the active ledger file
 
 # Budgets (per account, rolled up over the subtree)

@@ -188,7 +188,10 @@ module Finfry
 
       cli.subcommand "undo", yaml: <<-YAML
         type: object
-        description: Undo the most recent change
+        description: Undo the last change (removes it); with an id, post a reversing entry
+        positional: [id]
+        properties:
+          id: {type: integer, description: "Change id to reverse (see 'history')"}
         YAML
 
       cli.subcommand "history", yaml: <<-YAML
@@ -540,8 +543,14 @@ module Finfry
     end
 
     private def cmd_undo(r : Jargon::Result) : Nil
-      if cs = @store.undo_last(now, today)
-        puts "Undid ##{cs.reverses} — posted reversing entry ##{cs.id}"
+      if id = r["id"]?.try(&.as_i)
+        if cs = @store.reverse(id, now, today)
+          puts "Reversed ##{id} — posted correcting entry ##{cs.id}"
+        else
+          abort_with("no change ##{id} (see 'history')")
+        end
+      elsif cs = @store.undo_last
+        puts "Undid ##{cs.id}: #{cs.summary}"
       else
         puts "Nothing to undo."
       end
