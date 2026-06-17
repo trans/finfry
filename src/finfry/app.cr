@@ -1,6 +1,7 @@
 require "jargon"
 require "./store"
 require "./money"
+require "./recurrence"
 
 module Finfry
   # Wires the Jargon-defined CLI to the `Store` and renders output. Every entry
@@ -19,10 +20,16 @@ module Finfry
     # --- shared core (also used by the future AI/REPL layer) -------------
 
     # Validate, persist, and echo a transaction. The single commit path.
-    def commit(date : String, description : String, postings : Array(Posting)) : Transaction
+    def commit(date : String, description : String, postings : Array(Posting),
+               recurrence : String? = nil) : Transaction
       validate_date!(date)
-      txn = @store.record(date, description, postings)
-      puts "Recorded ##{txn.id}:"
+      if recurrence && !Recurrence.valid?(recurrence)
+        raise Error.new("unknown recurrence #{recurrence.inspect} (one of: #{Recurrence.names.join(", ")})")
+      end
+
+      txn = @store.record(date, description, postings, recurrence)
+      suffix = txn.recurrence ? " (#{txn.recurrence})" : ""
+      puts "Recorded ##{txn.id}#{suffix}:"
       puts render(txn)
       txn
     end
@@ -50,6 +57,7 @@ module Finfry
           from: {type: string, short: f, description: "Account paid from", default: #{DEFAULT_ASSET_ACCOUNT}}
           description: {type: string, short: m, description: "Note", default: ""}
           date: {type: string, short: d, description: "Date YYYY-MM-DD (default today)"}
+          recurrence: {type: string, short: r, description: "Recurs on a cadence", enum: [#{Recurrence.names.join(", ")}]}
         required: [amount, account]
         YAML
 
@@ -63,6 +71,7 @@ module Finfry
           to: {type: string, short: t, description: "Account received into", default: #{DEFAULT_ASSET_ACCOUNT}}
           description: {type: string, short: m, description: "Note", default: ""}
           date: {type: string, short: d, description: "Date YYYY-MM-DD (default today)"}
+          recurrence: {type: string, short: r, description: "Recurs on a cadence", enum: [#{Recurrence.names.join(", ")}]}
         required: [amount, account]
         YAML
 
@@ -87,6 +96,7 @@ module Finfry
           posts: {type: array, description: "ACCOUNT AMOUNT pairs; a trailing lone ACCOUNT is inferred to balance"}
           description: {type: string, short: m, description: "Note", default: ""}
           date: {type: string, short: d, description: "Date YYYY-MM-DD (default today)"}
+          recurrence: {type: string, short: r, description: "Recurs on a cadence", enum: [#{Recurrence.names.join(", ")}]}
         required: [posts]
         YAML
 
@@ -112,6 +122,11 @@ module Finfry
         description: Income statement for a month
         properties:
           month: {type: string, short: m, description: "Month as YYYY-MM (default current)"}
+        YAML
+
+      cli.subcommand "daily", yaml: <<-YAML
+        type: object
+        description: Per-day cost of recurring items
         YAML
 
       cli.subcommand "accounts", yaml: <<-YAML
@@ -168,6 +183,7 @@ module Finfry
       when "list"        then cmd_list(result)
       when "balance"     then cmd_balance(result)
       when "report"      then cmd_report(result)
+      when "daily"       then cmd_daily(result)
       when "accounts"    then cmd_accounts(result)
       when "delete"      then cmd_delete(result)
       when "budget set"  then cmd_budget_set(result)
@@ -184,14 +200,14 @@ module Finfry
       amount = Money.parse(r["amount"].as_s)
       account = r["account"].as_s
       from = r["from"]?.try(&.as_s) || DEFAULT_ASSET_ACCOUNT
-      commit(date_of(r), desc_of(r), [Posting.new(account, amount), Posting.new(from, -amount)])
+      commit(date_of(r), desc_of(r), [Posting.new(account, amount), Posting.new(from, -amount)], recurrence_of(r))
     end
 
     private def cmd_earn(r : Jargon::Result) : Nil
       amount = Money.parse(r["amount"].as_s)
       account = r["account"].as_s
       to = r["to"]?.try(&.as_s) || DEFAULT_ASSET_ACCOUNT
-      commit(date_of(r), desc_of(r), [Posting.new(to, amount), Posting.new(account, -amount)])
+      commit(date_of(r), desc_of(r), [Posting.new(to, amount), Posting.new(account, -amount)], recurrence_of(r))
     end
 
     private def cmd_transfer(r : Jargon::Result) : Nil
@@ -203,7 +219,7 @@ module Finfry
 
     private def cmd_add(r : Jargon::Result) : Nil
       tokens = r["posts"].as_a.map(&.as_s)
-      commit(date_of(r), desc_of(r), parse_postings(tokens))
+      commit(date_of(r), desc_of(r), parse_postings(tokens), recurrence_of(r))
     end
 
     # ACCOUNT AMOUNT pairs, with an optional final lone ACCOUNT whose amount is
@@ -249,6 +265,7 @@ module Finfry
       txns.each do |t|
         header = "##{t.id}  #{t.date}"
         header += "  #{t.description}" unless t.description.empty?
+        header += "  (#{t.recurrence})" if t.recurrence
         puts header
         puts render(t)
       end
@@ -308,6 +325,52 @@ module Finfry
         amount = flip ? -cents : cents
         puts "  %-24s  %12s" % {account, Money.format(amount)}
       end
+    end
+
+    private def cmd_daily(r : Jargon::Result) : Nil
+      items = Finfry.recurring_items(@store.transactions)
+      if items.empty?
+        puts "No recurring items. Tag one with -r when you spend or earn (e.g. -r monthly)."
+        return
+      end
+
+      width = items.max_of { |i| i.label.size }
+      expenses = items.select(&.expense?)
+      incomes = items.select(&.income?)
+
+      unless expenses.empty?
+        puts "Recurring expenses"
+        expenses.each { |i| puts daily_line(i, width) }
+        puts daily_total("Total", expenses.sum(&.per_day), width)
+      end
+
+      unless incomes.empty?
+        puts "" unless expenses.empty?
+        puts "Recurring income"
+        incomes.each { |i| puts daily_line(i, width) }
+        puts daily_total("Total", incomes.sum(&.per_day), width)
+      end
+
+      if !expenses.empty? && !incomes.empty?
+        net = incomes.sum(&.per_day) - expenses.sum(&.per_day)
+        puts daily_total("Net", net, width)
+      end
+    end
+
+    private def daily_line(item : RecurringItem, width : Int32) : String
+      "  %-#{width}s  %-9s  %12s  →  %9s/day" % {
+        item.label, item.recurrence, Money.format(item.amount), fmt(item.per_day),
+      }
+    end
+
+    private def daily_total(label : String, per_day : Float64, width : Int32) : String
+      "  %-#{width}s  %-9s  %12s     %9s/day  (%s/mo, %s/yr)" % {
+        label, "", "", fmt(per_day), fmt(per_day * Recurrence::AVG_MONTH), fmt(per_day * Recurrence::AVG_YEAR),
+      }
+    end
+
+    private def fmt(cents : Float64) : String
+      Money.format(cents.round.to_i64)
     end
 
     private def cmd_accounts(r : Jargon::Result) : Nil
@@ -376,6 +439,10 @@ module Finfry
 
     private def desc_of(r : Jargon::Result) : String
       r["description"]?.try(&.as_s) || ""
+    end
+
+    private def recurrence_of(r : Jargon::Result) : String?
+      r["recurrence"]?.try(&.as_s)
     end
 
     # Income/Liabilities/Equity are credit-normal; flip their sign so reports

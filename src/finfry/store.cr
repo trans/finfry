@@ -94,8 +94,9 @@ module Finfry
 
     # Build, validate, persist, and return a transaction. Raises `Error` if the
     # postings don't balance.
-    def record(date : String, description : String, postings : Array(Posting)) : Transaction
-      txn = Transaction.new(@db.next_id, date, description, postings)
+    def record(date : String, description : String, postings : Array(Posting),
+               recurrence : String? = nil) : Transaction
+      txn = Transaction.new(@db.next_id, date, description, postings, recurrence)
       unless txn.balanced?
         raise Error.new("postings do not balance (off by #{Money.format(txn.imbalance)})")
       end

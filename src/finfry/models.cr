@@ -36,7 +36,12 @@ module Finfry
     property description : String
     property postings : Array(Posting)
 
-    def initialize(@id, @date, @description, @postings)
+    # Cadence this transaction recurs on (e.g. "monthly"), or nil for one-offs.
+    # Used only for per-day amortization, not for auto-posting.
+    @[JSON::Field(emit_null: false)]
+    property recurrence : String? = nil
+
+    def initialize(@id, @date, @description, @postings, @recurrence = nil)
     end
 
     # Sum of all posting amounts; zero for a balanced transaction.

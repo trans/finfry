@@ -166,6 +166,73 @@ describe Finfry::Store do
   end
 end
 
+describe Finfry::Recurrence do
+  it "knows period lengths in days" do
+    Finfry::Recurrence.days("weekly").should eq(7.0)
+    Finfry::Recurrence.days("yearly").should eq(365.25)
+  end
+
+  it "amortizes an amount to a per-day cost" do
+    # $15.49/month over 365.25/12 days ≈ 50.9 cents/day
+    Finfry::Recurrence.per_day(1549_i64, "monthly").should be_close(50.89, 0.1)
+  end
+
+  it "rejects unknown cadences" do
+    Finfry::Recurrence.valid?("fortnightly").should be_false
+    expect_raises(Finfry::Error) { Finfry::Recurrence.days("fortnightly") }
+  end
+end
+
+describe "Finfry.recurring_items" do
+  it "keeps only the most recent occurrence of each stream" do
+    txns = [
+      recurring_expense(1, "2026-05-01", "Netflix", "Expenses:Subs:Netflix", 1549, "monthly"),
+      recurring_expense(2, "2026-06-01", "Netflix", "Expenses:Subs:Netflix", 1549, "monthly"),
+      recurring_expense(3, "2026-06-01", "Gym", "Expenses:Health:Gym", 4000, "monthly"),
+    ]
+    items = Finfry.recurring_items(txns)
+    items.map(&.label).sort.should eq(["Gym", "Netflix"]) # Netflix not double-counted
+  end
+
+  it "excludes one-off transactions" do
+    txns = [
+      recurring_expense(1, "2026-06-01", "Netflix", "Expenses:Subs:Netflix", 1549, "monthly"),
+      Finfry::Transaction.new(2, "2026-06-02", "latte", expense("Expenses:Food:Coffee", 500)),
+    ]
+    Finfry.recurring_items(txns).map(&.label).should eq(["Netflix"])
+  end
+
+  it "classifies income vs expense and sorts by per-day cost" do
+    txns = [
+      recurring_expense(1, "2026-06-01", "Rent", "Expenses:Housing:Rent", 120000, "monthly"),
+      recurring_expense(2, "2026-06-01", "Netflix", "Expenses:Subs:Netflix", 1549, "monthly"),
+      Finfry::Transaction.new(3, "2026-06-01", "Salary", [
+        Finfry::Posting.new("Assets:Checking", 400000_i64),
+        Finfry::Posting.new("Income:Salary", -400000_i64),
+      ], "monthly"),
+    ]
+    items = Finfry.recurring_items(txns)
+    items.first.label.should eq("Salary") # largest per-day first
+    items.find { |i| i.label == "Salary" }.not_nil!.income?.should be_true
+    items.find { |i| i.label == "Rent" }.not_nil!.expense?.should be_true
+  end
+end
+
+describe Finfry::Store do
+  it "persists recurrence on a transaction" do
+    with_store do |store|
+      store.record("2026-06-01", "Netflix", expense("Expenses:Subs:Netflix", 1549), "monthly")
+      Finfry::Store.new(store.path).transactions.first.recurrence.should eq("monthly")
+    end
+  end
+end
+
+# A balanced, recurring expense transaction paid from Assets:Checking.
+def recurring_expense(id : Int32, date : String, desc : String, account : String,
+                      cents : Int32, recurrence : String) : Finfry::Transaction
+  Finfry::Transaction.new(id, date, desc, expense(account, cents), recurrence)
+end
+
 # A balanced expense posting pair paid from Assets:Checking.
 def expense(account : String, cents : Int32) : Array(Finfry::Posting)
   [

@@ -45,6 +45,10 @@ finfry spend 89.99 Expenses:Shopping -f Liabilities:CreditCards:ChasePlatinum
 # Income
 finfry earn 3000 Income:Salary
 
+# Tag recurring items with a cadence (daily/weekly/biweekly/monthly/quarterly/yearly)
+finfry spend 15.49 Expenses:Subscriptions:Netflix -m Netflix -r monthly
+finfry earn 4000 Income:Salary -m Salary -r monthly
+
 # Move money between accounts
 finfry transfer 500 --from Assets:Checking --to Assets:Savings
 
@@ -60,6 +64,7 @@ finfry add -m "market run" -- \
 finfry list [-a Expenses:Food] [-m 2026-06] [-n 10]   # transactions
 finfry balance [Assets]                                # account balances
 finfry report [-m 2026-06]                             # income statement
+finfry daily                                           # per-day cost of recurring items
 finfry accounts                                        # accounts in use
 
 # Budgets (per account, rolled up over the subtree)
@@ -72,6 +77,25 @@ finfry delete 3
 ```
 
 Run `finfry --help`, or `finfry <command> --help`, for full options.
+
+### Recurring items & daily cost
+
+Tag a transaction with `-r <cadence>` to mark it recurring. `finfry daily` then
+shows what each commitment costs **per day**, derived from its cadence (e.g. a
+$15.49/month subscription is `15.49 ÷ (365.25/12) ≈ $0.51/day`), plus a total
+burn rate projected to monthly and yearly equivalents:
+
+```
+Recurring expenses
+  Rent     monthly   $1,200.00  →   $39.43/day
+  Netflix  monthly      $15.49  →    $0.51/day
+  Prime    yearly      $119.88  →    $0.33/day
+  Total                            $41.58/day  ($1,265.48/mo, $15,185.76/yr)
+```
+
+A recurring stream is identified by its description (or, if blank, the accounts
+it touches), and only its most recent occurrence counts — so recording the same
+monthly bill repeatedly doesn't inflate the daily figure.
 
 ### Amounts
 
@@ -102,6 +126,7 @@ Layout:
 
 - `src/finfry/money.cr` — parse/format money as integer cents
 - `src/finfry/models.cr` — `Posting`, `Transaction`, `Database` records
+- `src/finfry/recurrence.cr` — cadence→per-day amortization and recurring-item rollup
 - `src/finfry/store.cr` — JSON persistence, queries, legacy migration
 - `src/finfry/app.cr` — Jargon CLI definition and command handlers; the shared
   `commit`/`render` core that the planned AI entry layer will also use
@@ -111,8 +136,6 @@ Layout:
 
 - AI-assisted entry: describe a transaction in plain English and have it mapped
   to balanced postings against your existing accounts, with a confirm step
-- Recurrence metadata and per-day cost reporting ("what is Netflix costing me
-  per day?")
 
 ## Contributing
 
