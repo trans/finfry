@@ -52,10 +52,9 @@ finfry earn 4000 Income:Salary -m Salary -r monthly
 # Move money between accounts
 finfry transfer 500 --from Assets:Checking --to Assets:Savings
 
-# Split one purchase across several accounts. Because account names contain
-# colons, put postings after `--`. A trailing lone account is inferred so the
-# transaction balances:
-finfry add -m "market run" -- \
+# Split one purchase across several accounts. A trailing lone account is
+# inferred so the transaction balances:
+finfry add -m "market run" \
   Expenses:Food:Groceries 42.00 \
   Expenses:Food:Snacks    8.00 \
   Assets:Checking            # amount inferred: -50.00
