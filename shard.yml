@@ -14,4 +14,5 @@ license: MIT
 
 dependencies:
   jargon:
-    path: ../jargon
+    github: trans/jargon
+    version: ~> 0.20
