@@ -158,6 +158,41 @@ describe Finfry::Store do
     end
   end
 
+  it "undoes by appending a reversing entry, never deleting" do
+    with_store do |store|
+      store.changeset("rent", "2026-06-17 10:00") do
+        store.record("2026-06-17", "rent", expense("Expenses:Housing", 120000))
+      end
+
+      reversal = store.undo_last("2026-06-17 10:05", "2026-06-17").not_nil!
+      reversal.reverses.should eq(1)
+
+      # original is preserved; a mirror-image transaction was added
+      store.transactions.size.should eq(2)
+      store.balances("Expenses:Housing").values.sum.should eq(0_i64)
+      store.reversed?(1).should be_true
+    end
+  end
+
+  it "walks back originals newest-first and stops when exhausted" do
+    with_store do |store|
+      store.changeset("a", "t1") { store.record("2026-06-01", "a", expense("Expenses:Food", 100)) }
+      store.changeset("b", "t2") { store.record("2026-06-02", "b", expense("Expenses:Food", 200)) }
+
+      store.undo_last("t3", "2026-06-03").not_nil!.reverses.should eq(2) # newest first
+      store.undo_last("t4", "2026-06-04").not_nil!.reverses.should eq(1)
+      store.undo_last("t5", "2026-06-05").should be_nil # nothing left
+    end
+  end
+
+  it "restores a budget on undo" do
+    with_store do |store|
+      store.changeset("budget", "t1") { store.set_budget("Expenses:Food", 40000_i64) }
+      store.undo_last("t2", "2026-06-17")
+      store.budgets.has_key?("Expenses:Food").should be_false
+    end
+  end
+
   it "resolves the ledger path from FINFRY_DATA, then XDG, then the default" do
     with_env("FINFRY_DATA", "/tmp/explicit.json") do
       Finfry::Store.default_path.should eq("/tmp/explicit.json")

@@ -28,13 +28,18 @@ module Finfry
       if recurrence && !Recurrence.valid?(recurrence)
         raise Error.new("unknown recurrence #{recurrence.inspect} (one of: #{Recurrence.names.join(", ")})")
       end
-      enforce_account_policy!(postings)
 
-      txn = @store.record(date, description, postings, recurrence)
-      suffix = txn.recurrence ? " (#{txn.recurrence})" : ""
-      puts "Recorded ##{txn.id}#{suffix}:"
-      puts render(txn)
-      txn
+      primary = postings.first
+      label = description.empty? ? "#{Money.format(primary.amount)} #{primary.account}" : "#{description} (#{Money.format(primary.amount)})"
+
+      @store.changeset(label, now) do
+        enforce_account_policy!(postings)
+        txn = @store.record(date, description, postings, recurrence)
+        suffix = txn.recurrence ? " (#{txn.recurrence})" : ""
+        puts "Recorded ##{txn.id}#{suffix}:"
+        puts render(txn)
+        txn
+      end
     end
 
     # Human-readable rendering of a transaction's postings.
@@ -181,6 +186,18 @@ module Finfry
       accounts.default_subcommand("list")
       cli.subcommand "accounts", accounts
 
+      cli.subcommand "undo", yaml: <<-YAML
+        type: object
+        description: Undo the most recent change
+        YAML
+
+      cli.subcommand "history", yaml: <<-YAML
+        type: object
+        description: Show the change history
+        properties:
+          limit: {type: integer, short: n, description: "Show only the most recent N"}
+        YAML
+
       cli.subcommand "path", yaml: <<-YAML
         type: object
         description: Print the path to the active ledger file
@@ -242,6 +259,8 @@ module Finfry
       when "accounts rm"     then cmd_accounts_rm(result)
       when "accounts rename" then cmd_accounts_rename(result)
       when "accounts policy" then cmd_accounts_policy(result)
+      when "undo"            then cmd_undo(result)
+      when "history"         then cmd_history(result)
       when "path"            then cmd_path(result)
       when "delete"          then cmd_delete(result)
       when "budget set"      then cmd_budget_set(result)
@@ -309,10 +328,13 @@ module Finfry
         return puts("Not recorded.") unless confirm?("Record this?")
       end
 
-      # Declare any new accounts the user just approved, so commit's policy check
-      # passes (this is the deliberate "yes" that strict mode requires).
-      new_accounts.each { |a| @store.declare_account(a) }
-      commit(intent.date, intent.description, postings, recurrence)
+      # One changeset for the whole AI action: the new accounts the user just
+      # approved (the deliberate "yes" strict mode requires) plus the transaction.
+      flat = text.gsub('\n', ' ')
+      @store.changeset("ai: #{flat.size > 60 ? "#{flat[0, 57]}..." : flat}", now) do
+        new_accounts.each { |a| @store.declare_account(a) }
+        commit(intent.date, intent.description, postings, recurrence)
+      end
     end
 
     # Enforce the unknown-account policy before recording. Strict rejects;
@@ -517,6 +539,29 @@ module Finfry
       puts @store.path
     end
 
+    private def cmd_undo(r : Jargon::Result) : Nil
+      if cs = @store.undo_last(now, today)
+        puts "Undid ##{cs.reverses} — posted reversing entry ##{cs.id}"
+      else
+        puts "Nothing to undo."
+      end
+    end
+
+    private def cmd_history(r : Jargon::Result) : Nil
+      sets = @store.changesets.reverse
+      if limit = r["limit"]?.try(&.as_i)
+        sets = sets.first(limit)
+      end
+      if sets.empty?
+        puts "No history yet."
+        return
+      end
+      sets.each do |cs|
+        flag = !cs.reversal? && @store.reversed?(cs.id) ? "  (reversed)" : ""
+        puts "##{cs.id}  #{cs.at}  #{cs.summary}#{flag}"
+      end
+    end
+
     private def cmd_accounts_list(r : Jargon::Result) : Nil
       known = @store.known_accounts
       if known.empty?
@@ -531,11 +576,7 @@ module Finfry
 
     private def cmd_accounts_add(r : Jargon::Result) : Nil
       r["names"].as_a.map(&.as_s).each do |name|
-        if @store.declare_account(name)
-          puts "Added #{name}"
-        else
-          puts "#{name} already declared"
-        end
+        puts(@store.declare_account(name) ? "Added #{name}" : "#{name} already declared")
       end
     end
 
@@ -580,7 +621,9 @@ module Finfry
     private def cmd_budget_set(r : Jargon::Result) : Nil
       account = r["account"].as_s
       limit = Money.parse(r["amount"].as_s)
-      @store.set_budget(account, limit)
+      @store.changeset("budget #{account} = #{Money.format(limit)}", now) do
+        @store.set_budget(account, limit)
+      end
       puts "Budget for #{account} set to #{Money.format(limit)}/month"
     end
 
@@ -608,7 +651,8 @@ module Finfry
 
     private def cmd_budget_rm(r : Jargon::Result) : Nil
       account = r["account"].as_s
-      if @store.remove_budget(account)
+      removed = @store.changeset("remove budget #{account}", now) { @store.remove_budget(account) }
+      if removed
         puts "Removed budget for #{account}"
       else
         abort_with("no budget set for #{account}")
@@ -638,6 +682,10 @@ module Finfry
 
     private def today : String
       Time.local.to_s("%Y-%m-%d")
+    end
+
+    private def now : String
+      Time.local.to_s("%Y-%m-%d %H:%M")
     end
 
     private def current_month : String

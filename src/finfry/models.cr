@@ -100,9 +100,51 @@ module Finfry
   # (declared in the chart or already used by a posting).
   ACCOUNT_POLICIES = %w[strict guard off]
 
+  # One budget value before a changeset altered it. `previous` is nil when the
+  # account had no budget (so undo removes the key rather than restoring a value).
+  struct BudgetChange
+    include JSON::Serializable
+
+    property account : String
+    property previous : Int64?
+
+    def initialize(@account, @previous)
+    end
+  end
+
+  # A reversible unit of work — one manual command, or one approved AI plan.
+  # Records exactly what it changed so it can be undone. The ledger is an
+  # append-only set of independent, self-balancing transactions, so removing the
+  # transactions a changeset added never unbalances anything that came after.
+  struct Changeset
+    include JSON::Serializable
+
+    property id : Int32
+    property at : String      # timestamp, "YYYY-MM-DD HH:MM"
+    property summary : String # human-readable label
+
+    # If set, this changeset is the reversing entry that undid changeset N.
+    property reverses : Int32? = nil
+
+    property added_transaction_ids : Array(Int32) = [] of Int32
+    property budget_changes : Array(BudgetChange) = [] of BudgetChange
+    property declared_accounts : Array(String) = [] of String
+
+    def initialize(@id, @at, @summary)
+    end
+
+    def reversal? : Bool
+      !reverses.nil?
+    end
+
+    def empty? : Bool
+      added_transaction_ids.empty? && budget_changes.empty? && declared_accounts.empty?
+    end
+  end
+
   # The full persisted state: an id counter, all transactions, per-account
-  # monthly budget limits (cents), the declared chart of accounts, and the
-  # unknown-account policy.
+  # monthly budget limits (cents), the declared chart of accounts, the
+  # unknown-account policy, and the undo journal.
   class Database
     include JSON::Serializable
 
@@ -116,6 +158,10 @@ module Finfry
 
     # "strict" | "guard" | "off"
     property account_policy : String = "strict"
+
+    # Undo journal — one entry per mutating operation, newest last.
+    property changesets : Array(Changeset) = [] of Changeset
+    property next_changeset_id : Int32 = 1
 
     # Brand-new ledger only — seeds the starter chart. from_json does not call
     # this, so deserialized ledgers keep whatever chart they had (or none).

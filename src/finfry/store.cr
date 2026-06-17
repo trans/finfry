@@ -11,6 +11,8 @@ module Finfry
     getter path : String
     getter db : Database
 
+    @current_changeset : Changeset? = nil
+
     def initialize(@path : String = Store.default_path)
       @db = load
     end
@@ -103,6 +105,7 @@ module Finfry
 
       @db.next_id += 1
       @db.transactions << txn
+      @current_changeset.try { |cs| cs.added_transaction_ids << txn.id }
       save
       txn
     end
@@ -117,6 +120,7 @@ module Finfry
     end
 
     def set_budget(account : String, limit : Int64) : Nil
+      @current_changeset.try { |cs| cs.budget_changes << BudgetChange.new(account, @db.budgets[account]?) }
       @db.budgets[account] = limit
       save
     end
@@ -136,6 +140,7 @@ module Finfry
     def declare_account(name : String) : Bool
       return false if @db.accounts.includes?(name)
       @db.accounts << name
+      @current_changeset.try { |cs| cs.declared_accounts << name }
       save
       true
     end
@@ -177,8 +182,89 @@ module Finfry
 
     def remove_budget(account : String) : Bool
       removed = @db.budgets.delete(account)
-      save unless removed.nil?
+      unless removed.nil?
+        @current_changeset.try { |cs| cs.budget_changes << BudgetChange.new(account, removed) }
+        save
+      end
       !removed.nil?
+    end
+
+    # --- undo journal ----------------------------------------------------
+
+    # Run a block as a single reversible changeset. Mutations inside record how
+    # to undo themselves. Nested calls join the enclosing changeset, so an AI
+    # plan's many operations collapse into one undo unit. The changeset is only
+    # persisted if it actually changed something and the block didn't raise.
+    def changeset(summary : String, at : String, & : -> T) : T forall T
+      return yield if @current_changeset # nested → join the enclosing one
+
+      cs = Changeset.new(0, at, summary)
+      @current_changeset = cs
+      result =
+        begin
+          yield
+        ensure
+          @current_changeset = nil
+        end
+
+      unless cs.empty?
+        cs.id = @db.next_changeset_id
+        @db.next_changeset_id += 1
+        @db.changesets << cs
+        save
+      end
+      result
+    end
+
+    def changesets : Array(Changeset)
+      @db.changesets
+    end
+
+    # True if a reversing entry already undid changeset `id`.
+    def reversed?(id : Int32) : Bool
+      @db.changesets.any? { |c| c.reverses == id }
+    end
+
+    # The most recent original (non-reversal) changeset not yet reversed.
+    def undoable : Changeset?
+      @db.changesets.reverse_each.find { |c| !c.reversal? && !reversed?(c.id) }
+    end
+
+    # Undo the most recent change the proper accounting way: append a reversing
+    # entry. The original is never removed — transactions it added are negated
+    # by mirror-image postings, and budget changes are restored. Returns the
+    # reversing changeset, or nil if there's nothing to undo.
+    def undo_last(at : String, date : String) : Changeset?
+      original = undoable
+      return nil unless original
+
+      reversal = Changeset.new(0, at, "reverse ##{original.id}: #{original.summary}")
+      reversal.reverses = original.id
+      @current_changeset = reversal
+      begin
+        original.added_transaction_ids.each do |tid|
+          orig = @db.transactions.find { |t| t.id == tid }
+          next unless orig
+          negated = orig.postings.map { |p| Posting.new(p.account, -p.amount) }
+          record(date, "Reversal of ##{tid}", negated)
+        end
+
+        original.budget_changes.each do |change|
+          if previous = change.previous
+            set_budget(change.account, previous)
+          else
+            remove_budget(change.account)
+          end
+        end
+      ensure
+        @current_changeset = nil
+      end
+
+      reversal.id = @db.next_changeset_id
+      @db.next_changeset_id += 1
+      @db.changesets << reversal
+      save
+      reversal
     end
 
     # --- queries ---------------------------------------------------------

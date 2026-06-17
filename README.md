@@ -52,6 +52,15 @@ The AI path respects the policy too: a proposal that introduces a new account
 shows it as `New account: …`, and your confirmation is the deliberate "yes" that
 declares it — even in strict mode.
 
+### Undo (reversing entries)
+
+`finfry undo` reverses the most recent change the way accountants do — it
+**appends a correcting entry**, it never deletes. Undoing a transaction posts a
+mirror-image transaction (`Reversal of #N`) so the two net to zero; the original
+stays in the ledger and the full audit trail is preserved. `finfry history`
+lists changes and marks which have been reversed. Repeated `undo` walks back
+through your changes, newest first.
+
 ### Sign convention
 
 Amounts are signed cents internally. `Assets`/`Expenses` are debit-normal
@@ -115,6 +124,8 @@ finfry balance [Assets]                                # account balances
 finfry report [-m 2026-06]                             # income statement
 finfry daily                                           # per-day cost of recurring items
 finfry accounts                                        # accounts in use
+finfry history [-n 10]                                 # change history
+finfry undo                                            # reverse the most recent change
 finfry path                                            # print the active ledger file
 
 # Budgets (per account, rolled up over the subtree)
