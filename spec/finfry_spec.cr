@@ -127,6 +127,17 @@ describe Finfry::Store do
     end
   end
 
+  it "resolves the ledger path from FINFRY_DATA, then XDG, then the default" do
+    with_env("FINFRY_DATA", "/tmp/explicit.json") do
+      Finfry::Store.default_path.should eq("/tmp/explicit.json")
+    end
+    with_env("FINFRY_DATA", nil) do
+      with_env("XDG_DATA_HOME", "/tmp/xdg") do
+        Finfry::Store.default_path.should eq(File.join("/tmp/xdg", "finfry", "data.json"))
+      end
+    end
+  end
+
   it "stores and removes budgets" do
     with_store do |store|
       store.set_budget("Expenses:Food", 40000_i64)
@@ -322,6 +333,17 @@ def expense(account : String, cents : Int32) : Array(Finfry::Posting)
     Finfry::Posting.new(account, cents.to_i64),
     Finfry::Posting.new("Assets:Checking", -cents.to_i64),
   ]
+end
+
+# Temporarily set (or clear, with nil) an env var for the duration of the block.
+def with_env(key : String, value : String?, &)
+  previous = ENV[key]?
+  value ? (ENV[key] = value) : ENV.delete(key)
+  begin
+    yield
+  ensure
+    previous ? (ENV[key] = previous) : ENV.delete(key)
+  end
 end
 
 # Runs the block with a Store backed by a throwaway temp file.

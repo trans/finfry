@@ -90,6 +90,7 @@ finfry balance [Assets]                                # account balances
 finfry report [-m 2026-06]                             # income statement
 finfry daily                                           # per-day cost of recurring items
 finfry accounts                                        # accounts in use
+finfry path                                            # print the active ledger file
 
 # Budgets (per account, rolled up over the subtree)
 finfry budget set Expenses:Food 400

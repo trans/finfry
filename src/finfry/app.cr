@@ -144,6 +144,11 @@ module Finfry
         description: List all accounts in use
         YAML
 
+      cli.subcommand "path", yaml: <<-YAML
+        type: object
+        description: Print the path to the active ledger file
+        YAML
+
       cli.subcommand "delete", yaml: <<-YAML
         type: object
         description: Delete a transaction by id
@@ -196,6 +201,7 @@ module Finfry
       when "report"      then cmd_report(result)
       when "daily"       then cmd_daily(result)
       when "accounts"    then cmd_accounts(result)
+      when "path"        then cmd_path(result)
       when "delete"      then cmd_delete(result)
       when "budget set"  then cmd_budget_set(result)
       when "budget list" then cmd_budget_list(result)
@@ -422,6 +428,10 @@ module Finfry
 
     private def fmt(cents : Float64) : String
       Money.format(cents.round.to_i64)
+    end
+
+    private def cmd_path(r : Jargon::Result) : Nil
+      puts @store.path
     end
 
     private def cmd_accounts(r : Jargon::Result) : Nil
