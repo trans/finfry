@@ -35,6 +35,31 @@ sign on credit-normal accounts so they read as positive numbers.
 
 ## Usage
 
+### AI-assisted entry
+
+The quickest way to record something is to just describe it. `finfry ai` sends
+your description to Claude, maps it to balanced double-entry postings against
+your existing accounts, shows the proposal, and records it once you confirm:
+
+```sh
+export ANTHROPIC_API_KEY=sk-ant-...
+
+finfry ai "spent $50 at Starbucks yesterday on my Chase Platinum CC"
+# Proposed: 2026-06-15  Starbucks
+#     Expenses:Food:Coffee                      $50.00
+#     Liabilities:CreditCards:ChasePlatinum    -$50.00
+# Record this? [y/N]
+
+echo "netflix 15.49 monthly" | finfry ai --yes   # pipe + skip the prompt
+```
+
+It reuses the accounts you already have so naming stays consistent, and resolves
+relative dates like "yesterday". The AI only classifies and maps accounts —
+finfry assembles the balanced postings itself, so the books can't be thrown off.
+Set `FINFRY_MODEL` to override the model (default `claude-opus-4-8`).
+
+### Manual entry
+
 ```sh
 # Spend (default funding account is Assets:Checking)
 finfry spend 50 Expenses:Food:Coffee -m "Starbucks" -d 2026-06-15
@@ -127,14 +152,17 @@ Layout:
 - `src/finfry/models.cr` — `Posting`, `Transaction`, `Database` records
 - `src/finfry/recurrence.cr` — cadence→per-day amortization and recurring-item rollup
 - `src/finfry/store.cr` — JSON persistence, queries, legacy migration
+- `src/finfry/ai.cr` — the `Finfry::AI` seam: natural-language → structured intent
+  via the Claude API (raw HTTP, no SDK); swappable behind one module
 - `src/finfry/app.cr` — Jargon CLI definition and command handlers; the shared
-  `commit`/`render` core that the planned AI entry layer will also use
+  `commit`/`render`/`postings_for` core that the manual and AI entry paths share
 - `src/cli.cr` — executable entry point
 
 ## Roadmap
 
-- AI-assisted entry: describe a transaction in plain English and have it mapped
-  to balanced postings against your existing accounts, with a confirm step
+- Interactive REPL wrapping `finfry ai` with retained conversation context (so
+  follow-ups like "no, the other card" work)
+- AI support for split transactions (multiple categories in one entry)
 
 ## Contributing
 

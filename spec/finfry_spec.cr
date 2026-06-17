@@ -227,6 +227,89 @@ describe Finfry::Store do
   end
 end
 
+describe "Finfry.postings_for" do
+  it "builds a balanced expense pair" do
+    p = Finfry.postings_for("expense", 500_i64, "Expenses:Food", "Assets:Checking")
+    p.map(&.account).should eq(["Expenses:Food", "Assets:Checking"])
+    p.map(&.amount).should eq([500_i64, -500_i64])
+  end
+
+  it "flips direction for income" do
+    p = Finfry.postings_for("income", 500_i64, "Income:Salary", "Assets:Checking")
+    p.map(&.account).should eq(["Assets:Checking", "Income:Salary"])
+    p.map(&.amount).should eq([500_i64, -500_i64])
+  end
+
+  it "moves value for a transfer (account is destination)" do
+    p = Finfry.postings_for("transfer", 500_i64, "Assets:Savings", "Assets:Checking")
+    p.map(&.amount).sum.should eq(0_i64)
+    p[0].account.should eq("Assets:Savings")
+    p[0].amount.should eq(500_i64)
+  end
+
+  it "raises on an unknown kind" do
+    expect_raises(Finfry::Error) { Finfry.postings_for("bogus", 1_i64, "a", "b") }
+  end
+end
+
+describe Finfry::AI do
+  describe "#build_body" do
+    it "produces a valid request with model, schema, and accounts in the prompt" do
+      ai = Finfry::AI.new("test-key", "claude-opus-4-8")
+      body = JSON.parse(ai.build_body("spent $5 on coffee",
+        accounts: ["Expenses:Food:Coffee", "Assets:Checking"],
+        today: "2026-06-17",
+        default_asset: "Assets:Checking"))
+
+      body["model"].should eq("claude-opus-4-8")
+      body["messages"][0]["content"].should eq("spent $5 on coffee")
+      body["system"].as_s.should contain("Expenses:Food:Coffee")
+      body["system"].as_s.should contain("2026-06-17")
+      props = body["output_config"]["format"]["schema"]["properties"]
+      props["kind"]?.should_not be_nil
+      props["counter_account"]?.should_not be_nil
+    end
+  end
+
+  describe ".intent_from_response" do
+    it "extracts the intent from the first text block" do
+      response = {
+        "stop_reason" => "end_turn",
+        "content"     => [
+          {"type" => "text", "text" => {
+            "kind"            => "expense",
+            "amount"          => "50.00",
+            "account"         => "Expenses:Food:Coffee",
+            "counter_account" => "Liabilities:CreditCards:ChasePlatinum",
+            "date"            => "2026-06-15",
+            "description"     => "Starbucks",
+            "recurrence"      => "none",
+          }.to_json},
+        ],
+      }.to_json
+
+      intent = Finfry::AI.intent_from_response(response)
+      intent.kind.should eq("expense")
+      intent.amount.should eq("50.00")
+      intent.counter_account.should eq("Liabilities:CreditCards:ChasePlatinum")
+      intent.recurrence_or_nil.should be_nil
+    end
+
+    it "maps recurrence to nil only for \"none\"" do
+      base = {"kind" => "expense", "amount" => "1", "account" => "a", "counter_account" => "b",
+              "date" => "2026-06-17", "description" => "x"}
+      monthly = {"content" => [{"type" => "text", "text" => base.merge({"recurrence" => "monthly"}).to_json}]}.to_json
+      Finfry::AI.intent_from_response(monthly).recurrence_or_nil.should eq("monthly")
+    end
+
+    it "raises a friendly error when there is no content" do
+      expect_raises(Finfry::Error, /no usable content/) do
+        Finfry::AI.intent_from_response({"content" => [] of String}.to_json)
+      end
+    end
+  end
+end
+
 # A balanced, recurring expense transaction paid from Assets:Checking.
 def recurring_expense(id : Int32, date : String, desc : String, account : String,
                       cents : Int32, recurrence : String) : Finfry::Transaction

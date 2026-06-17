@@ -2,6 +2,7 @@ require "jargon"
 require "./store"
 require "./money"
 require "./recurrence"
+require "./ai"
 
 module Finfry
   # Wires the Jargon-defined CLI to the `Store` and renders output. Every entry
@@ -46,6 +47,15 @@ module Finfry
 
     private def cli : Jargon::CLI
       cli = Jargon.new("finfry")
+
+      cli.subcommand "ai", yaml: <<-YAML
+        type: object
+        description: Record a transaction from plain English (needs ANTHROPIC_API_KEY)
+        positional: [text]
+        properties:
+          text: {type: string, description: "What happened, in plain English (or piped via stdin)"}
+          "yes": {type: boolean, short: y, description: "Record without confirming"}
+        YAML
 
       cli.subcommand "spend", yaml: <<-YAML
         type: object
@@ -176,6 +186,7 @@ module Finfry
 
     private def dispatch(result : Jargon::Result) : Nil
       case result.subcommand
+      when "ai"          then cmd_ai(result)
       when "spend"       then cmd_spend(result)
       when "earn"        then cmd_earn(result)
       when "transfer"    then cmd_transfer(result)
@@ -198,23 +209,63 @@ module Finfry
 
     private def cmd_spend(r : Jargon::Result) : Nil
       amount = Money.parse(r["amount"].as_s)
-      account = r["account"].as_s
       from = r["from"]?.try(&.as_s) || DEFAULT_ASSET_ACCOUNT
-      commit(date_of(r), desc_of(r), [Posting.new(account, amount), Posting.new(from, -amount)], recurrence_of(r))
+      postings = Finfry.postings_for("expense", amount, r["account"].as_s, from)
+      commit(date_of(r), desc_of(r), postings, recurrence_of(r))
     end
 
     private def cmd_earn(r : Jargon::Result) : Nil
       amount = Money.parse(r["amount"].as_s)
-      account = r["account"].as_s
       to = r["to"]?.try(&.as_s) || DEFAULT_ASSET_ACCOUNT
-      commit(date_of(r), desc_of(r), [Posting.new(to, amount), Posting.new(account, -amount)], recurrence_of(r))
+      postings = Finfry.postings_for("income", amount, r["account"].as_s, to)
+      commit(date_of(r), desc_of(r), postings, recurrence_of(r))
     end
 
     private def cmd_transfer(r : Jargon::Result) : Nil
       amount = Money.parse(r["amount"].as_s)
-      from = r["from"].as_s
-      to = r["to"].as_s
-      commit(date_of(r), desc_of(r), [Posting.new(to, amount), Posting.new(from, -amount)])
+      postings = Finfry.postings_for("transfer", amount, r["to"].as_s, r["from"].as_s)
+      commit(date_of(r), desc_of(r), postings, recurrence_of(r))
+    end
+
+    private def cmd_ai(r : Jargon::Result) : Nil
+      text = r["text"]?.try(&.as_s) || ""
+      piped = false
+      if text.strip.empty?
+        text = STDIN.gets_to_end.strip
+        piped = true
+      end
+      raise Error.new("no description given") if text.empty?
+
+      intent = AI.from_env.extract(
+        text,
+        accounts: @store.accounts,
+        today: today,
+        default_asset: DEFAULT_ASSET_ACCOUNT,
+      )
+
+      amount = Money.parse(intent.amount)
+      recurrence = intent.recurrence_or_nil
+      postings = Finfry.postings_for(intent.kind, amount, intent.account, intent.counter_account)
+
+      suffix = recurrence ? " (#{recurrence})" : ""
+      puts "Proposed#{suffix}: #{intent.date}  #{intent.description}"
+      puts render(Transaction.new(0, intent.date, intent.description, postings, recurrence))
+
+      unless r["yes"]?.try(&.as_bool)
+        if piped || !STDIN.tty?
+          raise Error.new("re-run with --yes to record (can't prompt when input is piped)")
+        end
+        return puts("Not recorded.") unless confirm?("Record this?")
+      end
+
+      commit(intent.date, intent.description, postings, recurrence)
+    end
+
+    private def confirm?(question : String) : Bool
+      print "#{question} [y/N] "
+      STDOUT.flush
+      answer = STDIN.gets
+      !answer.nil? && answer.strip.downcase.in?("y", "yes")
     end
 
     private def cmd_add(r : Jargon::Result) : Nil

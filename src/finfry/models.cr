@@ -15,6 +15,22 @@ module Finfry
     account == prefix || account.starts_with?("#{prefix}:")
   end
 
+  # Build the balanced posting pair for a kind of transaction. `account` is the
+  # categorization account (Expenses/Income, or the destination of a transfer);
+  # `counter` is the money account (the asset/liability paid from or received
+  # into, or the source of a transfer). Both the CLI commands and the AI entry
+  # path funnel through here so balance is always assembled the same way.
+  def self.postings_for(kind : String, amount : Int64, account : String, counter : String) : Array(Posting)
+    case kind
+    when "expense", "transfer"
+      [Posting.new(account, amount), Posting.new(counter, -amount)]
+    when "income"
+      [Posting.new(counter, amount), Posting.new(account, -amount)]
+    else
+      raise Error.new("unknown transaction kind #{kind.inspect}")
+    end
+  end
+
   # One leg of a double-entry transaction: a signed amount applied to an account.
   struct Posting
     include JSON::Serializable
