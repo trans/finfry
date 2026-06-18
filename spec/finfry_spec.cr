@@ -384,6 +384,50 @@ describe Finfry::AI do
   end
 end
 
+describe Finfry::MCP do
+  it "serves initialize, tools/list, and an executing tools/call" do
+    path = File.tempname("finfry_mcp", ".json")
+    begin
+      requests = [
+        %({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}),
+        %({"jsonrpc":"2.0","method":"notifications/initialized"}),
+        %({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
+        %({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"spend","arguments":{"amount":"4.50","account":"Expenses:Food","date":"2026-06-18"}}}),
+      ]
+      output = IO::Memory.new
+      Finfry::MCP.new(Finfry::Store.new(path), IO::Memory.new(requests.join("\n") + "\n"), output).run
+
+      replies = output.to_s.each_line.reject(&.blank?).map { |l| JSON.parse(l) }.to_a
+      replies.size.should eq(3) # the notification gets no reply
+
+      replies[0]["result"]["serverInfo"]["name"].should eq("finfry")
+      replies[0]["result"]["protocolVersion"].should eq("2025-06-18")
+      replies[1]["result"]["tools"].as_a.map(&.["name"].as_s).should contain("spend")
+      replies[2]["result"]["isError"].should eq(false)
+      replies[2]["result"]["content"][0]["text"].as_s.should contain("Recorded")
+
+      Finfry::Store.new(path).transactions.size.should eq(1) # the write persisted
+    ensure
+      File.delete(path) if File.exists?(path)
+    end
+  end
+
+  it "reports a tool error without crashing the server" do
+    path = File.tempname("finfry_mcp", ".json")
+    begin
+      request = %({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"spend","arguments":{"amount":"5","account":"Expenses:Nope"}}})
+      output = IO::Memory.new
+      Finfry::MCP.new(Finfry::Store.new(path), IO::Memory.new(request + "\n"), output).run
+
+      reply = JSON.parse(output.to_s.each_line.reject(&.blank?).to_a.first)
+      reply["result"]["isError"].should eq(true)
+      reply["result"]["content"][0]["text"].as_s.should contain("unknown account")
+    ensure
+      File.delete(path) if File.exists?(path)
+    end
+  end
+end
+
 describe Finfry::App do
   it "exposes finfry commands as agent tools" do
     path = File.tempname("finfry_app", ".json")

@@ -10,7 +10,7 @@ module Finfry
   # path (manual commands now, the AI layer later) funnels through `commit` and
   # `render`, so the ledger logic lives here rather than in the CLI handlers.
   class App
-    def initialize(@store : Store = Store.new, @out : IO = STDOUT)
+    def initialize(@store : Store = Store.new, @out : IO = STDOUT, @interactive : Bool = true)
     end
 
     def run(argv : Array(String)) : Nil
@@ -234,6 +234,11 @@ module Finfry
         description: Print the path to the active ledger file
         YAML
 
+      cli.subcommand "mcp", yaml: <<-YAML
+        type: object
+        description: Run as an MCP server (stdio) for use inside an agent harness
+        YAML
+
       cli.subcommand "delete", yaml: <<-YAML
         type: object
         description: Delete a transaction by id
@@ -294,6 +299,7 @@ module Finfry
       when "redo"            then cmd_redo(result)
       when "history"         then cmd_history(result)
       when "path"            then cmd_path(result)
+      when "mcp"             then cmd_mcp(result)
       when "delete"          then cmd_delete(result)
       when "budget set"      then cmd_budget_set(result)
       when "budget list"     then cmd_budget_list(result)
@@ -397,7 +403,7 @@ module Finfry
       unknown = postings.map(&.account).uniq.reject { |a| @store.account_known?(a) }
       return if unknown.empty?
 
-      if @store.account_policy == "strict"
+      if @store.account_policy == "strict" || !@interactive
         raise Error.new(unknown_accounts_message(unknown))
       else
         unknown.each do |account|
@@ -592,12 +598,16 @@ module Finfry
       puts @store.path
     end
 
+    private def cmd_mcp(r : Jargon::Result) : Nil
+      MCP.new(@store).run
+    end
+
     private def cmd_undo(r : Jargon::Result) : Nil
       if id = r["id"]?.try(&.as_i)
         if cs = @store.reverse(id, now, today)
           puts "Reversed ##{id} — posted correcting entry ##{cs.id}"
         else
-          abort_with("no change ##{id} (see 'history')")
+          raise Error.new("no change ##{id} (see 'history')")
         end
       elsif cs = @store.undo_last
         puts "Undid ##{cs.id}: #{cs.summary}"
@@ -654,7 +664,7 @@ module Finfry
         msg += " (still referenced by existing transactions)" if @store.used_accounts.includes?(name)
         puts msg
       else
-        abort_with("#{name} is not in the chart")
+        raise Error.new("#{name} is not in the chart")
       end
     end
 
@@ -679,7 +689,7 @@ module Finfry
       if txn = @store.delete_transaction(id)
         puts "Deleted ##{txn.id}: #{txn.description}"
       else
-        abort_with("no transaction with id #{id}")
+        raise Error.new("no transaction with id #{id}")
       end
     end
 
@@ -722,7 +732,7 @@ module Finfry
       if removed
         puts "Removed budget for #{account}"
       else
-        abort_with("no budget set for #{account}")
+        raise Error.new("no budget set for #{account}")
       end
     end
 
@@ -764,6 +774,19 @@ module Finfry
     # The agent's tools as Claude tool definitions (built from the specs).
     def agent_tools : Array(AI::ToolDef)
       agent_tools_spec.map { |s| AI::ToolDef.new(s.name, s.description, s.schema) }
+    end
+
+    # Execute one agent tool directly (no plan deferral) and return its captured
+    # output plus whether it errored. Used by the MCP server, where the client
+    # harness owns approval. Both reads and writes execute immediately; each
+    # write records its own undoable changeset via `commit`.
+    def execute_tool(name : String, arguments : JSON::Any) : {String, Bool}
+      spec = agent_tools_spec.find { |s| s.name == name }
+      return {"unknown tool '#{name}'", true} unless spec
+      output = capture { dispatch(Jargon::Result.new(arguments, subcommand: spec.subcommand)) }
+      {output.blank? ? "(done)" : output, false}
+    rescue ex : Money::Error | Error
+      {"error: #{ex.message}", true}
     end
 
     # The tools the agent may use. Read tools run live; write tools are queued.

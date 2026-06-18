@@ -112,6 +112,34 @@ How it works:
 
 Set `FINFRY_MODEL` to override the model (default `claude-opus-4-8`).
 
+### Use finfry inside an agent harness (MCP)
+
+`finfry mcp` runs finfry as an [MCP](https://modelcontextprotocol.io) server over
+stdio, exposing the same safe command surface as tools so any MCP client (Claude
+Code, Claude Desktop, …) can read and update the ledger — with the harness
+providing the chat, history, and approval UI.
+
+Register it with an MCP client (standard config shape):
+
+```json
+{
+  "mcpServers": {
+    "finfry": { "command": "finfry", "args": ["mcp"] }
+  }
+}
+```
+
+Or with the Claude Code CLI: `claude mcp add finfry -- finfry mcp`.
+
+Notes:
+- The client (not finfry) gates each tool call, so writes execute when invoked —
+  each still records its own [undoable](#undo--corrections) change, and the
+  account policy + balance guards still apply.
+- `delete` and `accounts policy` are not exposed over MCP (same withholding as the
+  built-in agent).
+- Set `FINFRY_DATA` in the server's env if you want it pointed at a specific
+  ledger.
+
 ### Manual entry
 
 ```sh
@@ -213,14 +241,16 @@ Layout:
 - `src/finfry/store.cr` — JSON persistence, queries, legacy migration
 - `src/finfry/ai.cr` — the `Finfry::AI` seam: a tool-use conversation loop over
   the Claude API (raw HTTP, no SDK); swappable behind one module
+- `src/finfry/mcp.cr` — a stdio MCP server exposing the safe command surface as
+  tools, reusing the same registry and executor as the built-in agent
 - `src/finfry/app.cr` — Jargon CLI definition and command handlers; the shared
   `commit`/`render`/`postings_for` core that the manual and AI entry paths share
 - `src/cli.cr` — executable entry point
 
 ## Roadmap
 
-- Interactive REPL wrapping `finfry ai` with retained conversation context (so
-  follow-ups like "no, the other card" work)
+- A lightweight built-in chat fallback (a thin REPL over `finfry ai`) for when no
+  external harness is available
 - AI support for split transactions (multiple categories in one entry)
 
 ## Contributing
