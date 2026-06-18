@@ -176,6 +176,7 @@ finfry history [-n 10]                                 # change history
 finfry undo                                            # remove the most recent change
 finfry undo 4                                          # reverse an older change (correcting entry)
 finfry redo                                            # bring back the change undo just removed
+finfry init [dir]                                      # create a per-directory book
 finfry path                                            # print the active ledger file
 
 # Budgets (per account, rolled up over the subtree)
@@ -213,17 +214,33 @@ monthly bill repeatedly doesn't inflate the daily figure.
 Amounts accept a `$` and thousands separators (`$1,234.56`) and are stored as
 integer cents, so there is no floating-point rounding error.
 
-### Data storage
+### Data storage & books
 
-The ledger is a single JSON file, by default at:
+A ledger is a single JSON file. finfry finds the active one by, in order:
 
+1. **`FINFRY_DATA`** — an explicit path override.
+2. **The nearest `finfry.json`** found by walking up from the current directory
+   (like git's `.git`) — this is a per-directory *book*.
+3. **The global ledger** at `$XDG_DATA_HOME/finfry/data.json` (typically
+   `~/.local/share/finfry/data.json`).
+
+`finfry path` prints whichever is active.
+
+Create a per-directory book with `finfry init` (defaults to the current
+directory; pass a path to use another):
+
+```sh
+mkdir ~/finances && cd ~/finances && finfry init
+# Initialized finfry book at /home/you/finances/finfry.json
 ```
-$XDG_DATA_HOME/finfry/data.json   # typically ~/.local/share/finfry/data.json
-```
 
-Set `FINFRY_DATA` to use a different file. Writes are atomic (temp file +
-rename), and an older single-entry ledger is migrated to double-entry on first
-load (the original is kept as a `.bak`).
+Running finfry anywhere under that directory then uses that book. This pairs well
+with a directory-scoped MCP registration (`--scope local`) so only sessions
+started there can touch those books. Without a book in scope, finfry uses the
+global ledger, so casual single-book use still works anywhere.
+
+Writes are atomic (temp file + rename), and an older single-entry ledger is
+migrated to double-entry on first load (the original is kept as a `.bak`).
 
 ## Development
 

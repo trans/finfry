@@ -24,11 +24,18 @@ format:
     crystal tool format src/ spec/
 
 # Build a release binary and install it to {{bindir}}.
+# Installs by rename so it can replace a binary that's currently running
+# (e.g. an active `finfry mcp` server) without "Text file busy".
 install: release
     @mkdir -p {{bindir}}
-    cp bin/finfry {{bindir}}/finfry
+    cp bin/finfry {{bindir}}/finfry.new
+    mv -f {{bindir}}/finfry.new {{bindir}}/finfry
     @echo "installed finfry -> {{bindir}}/finfry"
 
 # Register finfry as an MCP server with Claude Code (user scope).
 mcp-add:
     claude mcp add finfry --scope user -- finfry mcp
+
+# Remove the user-scope finfry MCP registration.
+mcp-remove:
+    claude mcp remove finfry --scope user

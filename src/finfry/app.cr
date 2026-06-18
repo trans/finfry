@@ -229,6 +229,14 @@ module Finfry
           limit: {type: integer, short: n, description: "Show only the most recent N"}
         YAML
 
+      cli.subcommand "init", yaml: <<-YAML
+        type: object
+        description: Create a finfry book (ledger) in a directory (current one by default)
+        positional: [path]
+        properties:
+          path: {type: string, description: "Directory for the book (defaults to the current directory)"}
+        YAML
+
       cli.subcommand "path", yaml: <<-YAML
         type: object
         description: Print the path to the active ledger file
@@ -298,6 +306,7 @@ module Finfry
       when "undo"            then cmd_undo(result)
       when "redo"            then cmd_redo(result)
       when "history"         then cmd_history(result)
+      when "init"            then cmd_init(result)
       when "path"            then cmd_path(result)
       when "mcp"             then cmd_mcp(result)
       when "delete"          then cmd_delete(result)
@@ -592,6 +601,14 @@ module Finfry
 
     private def fmt(cents : Float64) : String
       Money.format(cents.round.to_i64)
+    end
+
+    private def cmd_init(r : Jargon::Result) : Nil
+      target = r["path"]?.try(&.as_s) || Dir.current
+      path = File.join(target, Store::BOOK_FILE)
+      raise Error.new("already a finfry book: #{path}") if File.exists?(path)
+      Store.new(path).save
+      puts "Initialized finfry book at #{path}"
     end
 
     private def cmd_path(r : Jargon::Result) : Nil

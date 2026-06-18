@@ -17,11 +17,32 @@ module Finfry
       @db = load
     end
 
-    def self.default_path : String
-      if explicit = ENV["FINFRY_DATA"]?
-        return explicit
-      end
+    # The visible per-directory book file. finfry discovers it by walking up from
+    # the current directory (like git's .git), so a project/folder can hold its
+    # own ledger.
+    BOOK_FILE = "finfry.json"
 
+    # Resolve the active ledger: an explicit FINFRY_DATA override, else the
+    # nearest book file walking up from the current directory, else the global
+    # per-user ledger.
+    def self.default_path : String
+      ENV["FINFRY_DATA"]? || discover_book || global_path
+    end
+
+    # Nearest `finfry.json` at or above the current directory, or nil.
+    def self.discover_book : String?
+      dir = Dir.current
+      loop do
+        candidate = File.join(dir, BOOK_FILE)
+        return candidate if File.exists?(candidate)
+        parent = File.dirname(dir)
+        break if parent == dir # reached the filesystem root
+        dir = parent
+      end
+      nil
+    end
+
+    def self.global_path : String
       base = ENV["XDG_DATA_HOME"]? || File.join(Path.home.to_s, ".local", "share")
       File.join(base, "finfry", "data.json")
     end

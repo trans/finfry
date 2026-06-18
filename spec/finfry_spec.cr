@@ -1,4 +1,5 @@
 require "./spec_helper"
+require "file_utils"
 
 describe Finfry::Money do
   describe ".parse" do
@@ -209,14 +210,33 @@ describe Finfry::Store do
     end
   end
 
-  it "resolves the ledger path from FINFRY_DATA, then XDG, then the default" do
+  it "uses FINFRY_DATA when set, above everything else" do
     with_env("FINFRY_DATA", "/tmp/explicit.json") do
       Finfry::Store.default_path.should eq("/tmp/explicit.json")
     end
-    with_env("FINFRY_DATA", nil) do
-      with_env("XDG_DATA_HOME", "/tmp/xdg") do
-        Finfry::Store.default_path.should eq(File.join("/tmp/xdg", "finfry", "data.json"))
+  end
+
+  it "discovers the nearest book walking up, else falls back to the global path" do
+    root = File.tempname("finfry_book")
+    Dir.mkdir_p(File.join(root, "sub"))
+    File.write(File.join(root, Finfry::Store::BOOK_FILE), "{}")
+    empty = File.tempname("finfry_empty")
+    Dir.mkdir_p(empty)
+
+    begin
+      with_env("FINFRY_DATA", nil) do
+        with_env("XDG_DATA_HOME", "/tmp/xdg") do
+          Dir.cd(File.join(root, "sub")) do
+            Finfry::Store.default_path.should eq(File.join(root, Finfry::Store::BOOK_FILE))
+          end
+          Dir.cd(empty) do
+            Finfry::Store.default_path.should eq(File.join("/tmp/xdg", "finfry", "data.json"))
+          end
+        end
       end
+    ensure
+      FileUtils.rm_rf(root)
+      FileUtils.rm_rf(empty)
     end
   end
 
