@@ -346,59 +346,56 @@ describe "Finfry.postings_for" do
 end
 
 describe Finfry::AI do
-  describe "#build_body" do
-    it "produces a valid request with model, schema, and accounts in the prompt" do
-      ai = Finfry::AI.new("test-key", "claude-opus-4-8")
-      body = JSON.parse(ai.build_body("spent $5 on coffee",
-        accounts: ["Expenses:Food:Coffee", "Assets:Checking"],
-        today: "2026-06-17",
-        default_asset: "Assets:Checking"))
+  describe ".parse_turn" do
+    it "collects text and tool calls, not done while a tool is requested" do
+      resp = JSON.parse(%({
+        "stop_reason": "tool_use",
+        "content": [
+          {"type": "text", "text": "Let me check."},
+          {"type": "tool_use", "id": "tu_1", "name": "balance", "input": {"prefix": "Expenses"}}
+        ]
+      }))
+      turn = Finfry::AI.parse_turn(resp)
+      turn.text.should eq("Let me check.")
+      turn.done?.should be_false
+      turn.tool_calls.size.should eq(1)
+      turn.tool_calls.first.name.should eq("balance")
+      turn.tool_calls.first.input["prefix"].should eq("Expenses")
+    end
 
-      body["model"].should eq("claude-opus-4-8")
-      body["messages"][0]["content"].should eq("spent $5 on coffee")
-      body["system"].as_s.should contain("Expenses:Food:Coffee")
-      body["system"].as_s.should contain("2026-06-17")
-      props = body["output_config"]["format"]["schema"]["properties"]
-      props["kind"]?.should_not be_nil
-      props["counter_account"]?.should_not be_nil
+    it "is done on end_turn" do
+      resp = JSON.parse(%({"stop_reason": "end_turn", "content": [{"type": "text", "text": "All set."}]}))
+      turn = Finfry::AI.parse_turn(resp)
+      turn.done?.should be_true
+      turn.text.should eq("All set.")
     end
   end
 
-  describe ".intent_from_response" do
-    it "extracts the intent from the first text block" do
-      response = {
-        "stop_reason" => "end_turn",
-        "content"     => [
-          {"type" => "text", "text" => {
-            "kind"            => "expense",
-            "amount"          => "50.00",
-            "account"         => "Expenses:Food:Coffee",
-            "counter_account" => "Liabilities:CreditCards:ChasePlatinum",
-            "date"            => "2026-06-15",
-            "description"     => "Starbucks",
-            "recurrence"      => "none",
-          }.to_json},
-        ],
-      }.to_json
-
-      intent = Finfry::AI.intent_from_response(response)
-      intent.kind.should eq("expense")
-      intent.amount.should eq("50.00")
-      intent.counter_account.should eq("Liabilities:CreditCards:ChasePlatinum")
-      intent.recurrence_or_nil.should be_nil
+  describe "#build_request" do
+    it "includes the model, system, tools, and messages" do
+      ai = Finfry::AI.new("test-key", "claude-opus-4-8")
+      tools = [Finfry::AI::ToolDef.new("balance", "show balances", JSON.parse(%({"type": "object", "properties": {}})))]
+      body = JSON.parse(ai.build_request("you are finfry", tools, [%({"role":"user","content":"hi"})]))
+      body["model"].should eq("claude-opus-4-8")
+      body["system"].should eq("you are finfry")
+      body["tools"][0]["name"].should eq("balance")
+      body["messages"][0]["content"].should eq("hi")
     end
+  end
+end
 
-    it "maps recurrence to nil only for \"none\"" do
-      base = {"kind" => "expense", "amount" => "1", "account" => "a", "counter_account" => "b",
-              "date" => "2026-06-17", "description" => "x"}
-      monthly = {"content" => [{"type" => "text", "text" => base.merge({"recurrence" => "monthly"}).to_json}]}.to_json
-      Finfry::AI.intent_from_response(monthly).recurrence_or_nil.should eq("monthly")
-    end
-
-    it "raises a friendly error when there is no content" do
-      expect_raises(Finfry::Error, /no usable content/) do
-        Finfry::AI.intent_from_response({"content" => [] of String}.to_json)
-      end
+describe Finfry::App do
+  it "exposes finfry commands as agent tools" do
+    path = File.tempname("finfry_app", ".json")
+    begin
+      tools = Finfry::App.new(Finfry::Store.new(path)).agent_tools
+      names = tools.map(&.name)
+      names.should contain("spend")
+      names.should contain("balance")
+      spend = tools.find { |t| t.name == "spend" }.not_nil!
+      spend.input_schema["required"].as_a.map(&.as_s).should contain("amount")
+    ensure
+      File.delete(path) if File.exists?(path)
     end
   end
 end

@@ -10,13 +10,36 @@ module Finfry
   # path (manual commands now, the AI layer later) funnels through `commit` and
   # `render`, so the ledger logic lives here rather than in the CLI handlers.
   class App
-    def initialize(@store : Store = Store.new)
+    def initialize(@store : Store = Store.new, @out : IO = STDOUT)
     end
 
     def run(argv : Array(String)) : Nil
       cli.run(argv) { |result| dispatch(result) }
     rescue ex : Money::Error | Error
       abort_with(ex.message)
+    end
+
+    # All handler output flows through @out so the AI agent can capture a read
+    # command's result. These shadow the top-level puts/print inside App.
+    private def puts(*args) : Nil
+      @out.puts(*args)
+    end
+
+    private def print(*args) : Nil
+      @out.print(*args)
+    end
+
+    # Run a block with output captured to a string instead of printed.
+    private def capture(&) : String
+      previous = @out
+      buffer = IO::Memory.new
+      @out = buffer
+      begin
+        yield
+      ensure
+        @out = previous
+      end
+      buffer.to_s
     end
 
     # --- shared core (also used by the future AI/REPL layer) -------------
@@ -57,11 +80,11 @@ module Finfry
 
       cli.subcommand "ai", yaml: <<-YAML
         type: object
-        description: Record a transaction from plain English (needs ANTHROPIC_API_KEY)
+        description: Ask or instruct finfry in plain English (needs ANTHROPIC_API_KEY)
         positional: [text]
         properties:
-          text: {type: string, description: "What happened, in plain English (or piped via stdin)"}
-          "yes": {type: boolean, short: y, description: "Record without confirming"}
+          text: {type: string, description: "A question or instruction (or piped via stdin)"}
+          "yes": {type: boolean, short: y, description: "Apply the proposed plan without confirming"}
         YAML
 
       cli.subcommand "spend", yaml: <<-YAML
@@ -309,41 +332,62 @@ module Finfry
         text = STDIN.gets_to_end.strip
         piped = true
       end
-      raise Error.new("no description given") if text.empty?
+      raise Error.new("no request given") if text.empty?
 
-      intent = AI.from_env.extract(
-        text,
-        accounts: @store.known_accounts,
-        today: today,
-        default_asset: DEFAULT_ASSET_ACCOUNT,
-      )
+      specs = agent_tools_spec
+      by_name = specs.to_h { |s| {s.name, s} }
+      tools = specs.map { |s| AI::ToolDef.new(s.name, s.description, s.schema) }
+      plan = [] of {String, JSON::Any}
 
-      amount = Money.parse(intent.amount)
-      recurrence = intent.recurrence_or_nil
-      postings = Finfry.postings_for(intent.kind, amount, intent.account, intent.counter_account)
-      new_accounts = postings.map(&.account).uniq.reject { |a| @store.account_known?(a) }
-
-      suffix = recurrence ? " (#{recurrence})" : ""
-      puts "Proposed#{suffix}: #{intent.date}  #{intent.description}"
-      puts render(Transaction.new(0, intent.date, intent.description, postings, recurrence))
-      unless new_accounts.empty?
-        puts "New account#{new_accounts.size == 1 ? "" : "s"}: #{new_accounts.join(", ")}"
+      answer = AI.from_env.converse(text, system: agent_system_prompt, tools: tools) do |call|
+        run_tool(call, by_name, plan)
       end
+
+      puts answer unless answer.strip.empty?
+      return if plan.empty?
+
+      puts ""
+      puts "Plan:"
+      plan.each { |(subcommand, input)| puts "  #{describe_write(subcommand, input)}" }
 
       unless r["yes"]?.try(&.as_bool)
         if piped || !STDIN.tty?
-          raise Error.new("re-run with --yes to record (can't prompt when input is piped)")
+          raise Error.new("re-run with --yes to apply (can't prompt when input is piped)")
         end
-        return puts("Not recorded.") unless confirm?("Record this?")
+        return puts("Not applied.") unless confirm?("Apply this plan?")
       end
 
-      # One changeset for the whole AI action: the new accounts the user just
-      # approved (the deliberate "yes" strict mode requires) plus the transaction.
       flat = text.gsub('\n', ' ')
       @store.changeset("ai: #{flat.size > 60 ? "#{flat[0, 57]}..." : flat}", now) do
-        new_accounts.each { |a| @store.declare_account(a) }
-        commit(intent.date, intent.description, postings, recurrence)
+        plan.each { |(subcommand, input)| dispatch(Jargon::Result.new(input, subcommand: subcommand)) }
       end
+    end
+
+    # Run one tool call: read tools execute now (captured output is returned to
+    # the model); write tools are queued into `plan` for the user to approve.
+    private def run_tool(call : AI::ToolCall, by_name : Hash(String, AgentTool), plan : Array({String, JSON::Any})) : AI::ToolOutcome
+      spec = by_name[call.name]?
+      return AI::ToolOutcome.new("unknown tool '#{call.name}'", error: true) unless spec
+
+      if spec.write
+        plan << {spec.subcommand, call.input}
+        AI::ToolOutcome.new("Queued for the user's approval.")
+      else
+        output = capture { dispatch(Jargon::Result.new(call.input, subcommand: spec.subcommand)) }
+        AI::ToolOutcome.new(output.blank? ? "(no output)" : output)
+      end
+    rescue ex : Money::Error | Error
+      AI::ToolOutcome.new("error: #{ex.message}", error: true)
+    end
+
+    # A readable one-line preview of a queued write.
+    private def describe_write(subcommand : String, input : JSON::Any) : String
+      args = input.as_h.compact_map do |key, value|
+        next if value.raw.nil?
+        rendered = value.as_a?.try(&.join(",")) || value.to_s
+        "#{key}=#{rendered}"
+      end
+      "#{subcommand} #{args.join(" ")}".rstrip
     end
 
     # Enforce the unknown-account policy before recording. Strict rejects;
@@ -701,6 +745,89 @@ module Finfry
     private def display_cents(account : String, cents : Int64) : Int64
       credit_normal = {"Income", "Liabilities", "Equity"}.any? { |p| account.starts_with?(p) }
       credit_normal ? -cents : cents
+    end
+
+    # A finfry command exposed to the AI: tool name, the dispatch subcommand it
+    # maps to, whether it mutates (writes are deferred for approval), a
+    # description, and the JSON Schema of its input.
+    struct AgentTool
+      getter name : String
+      getter subcommand : String
+      getter write : Bool
+      getter description : String
+      getter schema : JSON::Any
+
+      def initialize(@name, @subcommand, @write, @description, @schema)
+      end
+    end
+
+    # The agent's tools as Claude tool definitions (built from the specs).
+    def agent_tools : Array(AI::ToolDef)
+      agent_tools_spec.map { |s| AI::ToolDef.new(s.name, s.description, s.schema) }
+    end
+
+    # The tools the agent may use. Read tools run live; write tools are queued.
+    # `delete` and `accounts policy` are deliberately withheld — the AI shouldn't
+    # hard-delete or weaken its own guardrails.
+    private def agent_tools_spec : Array(AgentTool)
+      cadence = Recurrence.names.to_json
+      [
+        AgentTool.new("list", "list", false, "List transactions; optional filters: account (subtree), month (YYYY-MM), limit.",
+          JSON.parse(%({"type":"object","properties":{"account":{"type":"string"},"month":{"type":"string"},"limit":{"type":"integer"}}}))),
+        AgentTool.new("balance", "balance", false, "Show account balances, optionally limited to an account subtree (prefix).",
+          JSON.parse(%({"type":"object","properties":{"prefix":{"type":"string"}}}))),
+        AgentTool.new("report", "report", false, "Income statement for a month (YYYY-MM; default current).",
+          JSON.parse(%({"type":"object","properties":{"month":{"type":"string"}}}))),
+        AgentTool.new("daily", "daily", false, "Per-day amortized cost of recurring items.",
+          JSON.parse(%({"type":"object","properties":{}}))),
+        AgentTool.new("accounts", "accounts list", false, "List the known accounts.",
+          JSON.parse(%({"type":"object","properties":{}}))),
+        AgentTool.new("history", "history", false, "Recent change history (optional limit).",
+          JSON.parse(%({"type":"object","properties":{"limit":{"type":"integer"}}}))),
+        AgentTool.new("spend", "spend", true, "Record an expense. account = the Expenses:* account; from = the asset/liability paid from (default #{DEFAULT_ASSET_ACCOUNT}).",
+          JSON.parse(%({"type":"object","properties":{"amount":{"type":"string"},"account":{"type":"string"},"from":{"type":"string"},"description":{"type":"string"},"date":{"type":"string"},"recurrence":{"type":"string","enum":#{cadence}}},"required":["amount","account"]}))),
+        AgentTool.new("earn", "earn", true, "Record income. account = the Income:* account; to = the asset received into (default #{DEFAULT_ASSET_ACCOUNT}).",
+          JSON.parse(%({"type":"object","properties":{"amount":{"type":"string"},"account":{"type":"string"},"to":{"type":"string"},"description":{"type":"string"},"date":{"type":"string"},"recurrence":{"type":"string","enum":#{cadence}}},"required":["amount","account"]}))),
+        AgentTool.new("transfer", "transfer", true, "Move money between two accounts (account-to-account; neither income nor expense).",
+          JSON.parse(%({"type":"object","properties":{"amount":{"type":"string"},"from":{"type":"string"},"to":{"type":"string"},"description":{"type":"string"},"date":{"type":"string"}},"required":["amount","from","to"]}))),
+        AgentTool.new("budget_set", "budget set", true, "Set a monthly budget for an account.",
+          JSON.parse(%({"type":"object","properties":{"account":{"type":"string"},"amount":{"type":"string"}},"required":["account","amount"]}))),
+        AgentTool.new("budget_remove", "budget rm", true, "Remove an account's budget.",
+          JSON.parse(%({"type":"object","properties":{"account":{"type":"string"}},"required":["account"]}))),
+        AgentTool.new("accounts_add", "accounts add", true, "Declare new accounts in the chart. Do this before spending to a brand-new account.",
+          JSON.parse(%({"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}}},"required":["names"]}))),
+        AgentTool.new("accounts_rename", "accounts rename", true, "Rename an account everywhere (merges into the target if it exists).",
+          JSON.parse(%({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}))),
+      ]
+    end
+
+    private def agent_system_prompt : String
+      accounts = @store.known_accounts
+      account_list = accounts.empty? ? "(none yet)" : accounts.join("\n")
+      <<-PROMPT
+      You are finfry's assistant, managing a personal double-entry ledger through tools.
+
+      Today is #{today}. Resolve relative dates ("yesterday", "last Friday") to YYYY-MM-DD.
+
+      Accounts are hierarchical and colon-separated:
+        Assets:* (money you have), Liabilities:* (money you owe),
+        Income:* (where money comes from), Expenses:* (where it goes).
+      Default money account: #{DEFAULT_ASSET_ACCOUNT}. Amounts are positive decimal strings.
+
+      Known accounts — REUSE one whenever it fits; only create a new one (same convention) when none does:
+      #{account_list}
+
+      How to work:
+      - Use the read tools (list, balance, report, daily, accounts, history) freely to
+        answer questions and to gather what you need before making any change.
+      - To change the ledger, call the write tools (spend, earn, transfer, budget_set,
+        budget_remove, accounts_add, accounts_rename) with concrete values. These do
+        NOT take effect immediately — finfry collects them and asks the user to approve
+        the plan, so express exactly what should happen.
+      - If a change needs an account that isn't known yet, call accounts_add for it
+        first, then the spend/earn that uses it.
+      - Finish with a brief plain-language summary of what you found or queued.
+      PROMPT
     end
 
     private def today : String

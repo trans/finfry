@@ -79,27 +79,37 @@ sign on credit-normal accounts so they read as positive numbers.
 
 ## Usage
 
-### AI-assisted entry
+### AI assistant
 
-The quickest way to record something is to just describe it. `finfry ai` sends
-your description to Claude, maps it to balanced double-entry postings against
-your existing accounts, shows the proposal, and records it once you confirm:
+`finfry ai` lets you ask questions or make changes in plain English. Under the
+hood every finfry command is exposed to Claude as a tool, so it can read the
+ledger to answer you and propose changes for you to approve.
 
 ```sh
 export ANTHROPIC_API_KEY=sk-ant-...
 
-finfry ai "spent $50 at Starbucks yesterday on my Chase Platinum CC"
-# Proposed: 2026-06-15  Starbucks
-#     Expenses:Food:Coffee                      $50.00
-#     Liabilities:CreditCards:ChasePlatinum    -$50.00
-# Record this? [y/N]
+# Ask — read-only, answered directly
+finfry ai "what did I spend on food last month?"
 
-echo "netflix 15.49 monthly" | finfry ai --yes   # pipe + skip the prompt
+# Record — one or many changes, gathered into a plan you approve
+finfry ai "spent $50 at Starbucks yesterday on my Chase Platinum CC"
+finfry ai "set next month's food budget 10% under what I spent in May"
+echo "netflix 15.49 monthly" | finfry ai --yes
 ```
 
-It reuses the accounts you already have so naming stays consistent, and resolves
-relative dates like "yesterday". The AI only classifies and maps accounts —
-finfry assembles the balanced postings itself, so the books can't be thrown off.
+How it works:
+
+- **Read tools** (`list`, `balance`, `report`, `daily`, `accounts`, `history`)
+  run immediately so the AI can answer and gather context.
+- **Write tools** (`spend`, `earn`, `transfer`, `budget`, `accounts add/rename`)
+  don't take effect right away — they're collected into a **plan** that finfry
+  shows you and applies only once you approve it (`--yes` skips the prompt).
+  The whole plan applies as one [undoable](#undo--corrections) change.
+- It reuses your existing accounts for consistency and resolves relative dates.
+  finfry assembles the balanced postings and enforces the account policy, so the
+  AI can't throw off the books. `delete` and `accounts policy` are withheld from
+  the AI on purpose.
+
 Set `FINFRY_MODEL` to override the model (default `claude-opus-4-8`).
 
 ### Manual entry
@@ -201,8 +211,8 @@ Layout:
 - `src/finfry/models.cr` — `Posting`, `Transaction`, `Database` records
 - `src/finfry/recurrence.cr` — cadence→per-day amortization and recurring-item rollup
 - `src/finfry/store.cr` — JSON persistence, queries, legacy migration
-- `src/finfry/ai.cr` — the `Finfry::AI` seam: natural-language → structured intent
-  via the Claude API (raw HTTP, no SDK); swappable behind one module
+- `src/finfry/ai.cr` — the `Finfry::AI` seam: a tool-use conversation loop over
+  the Claude API (raw HTTP, no SDK); swappable behind one module
 - `src/finfry/app.cr` — Jargon CLI definition and command handlers; the shared
   `commit`/`render`/`postings_for` core that the manual and AI entry paths share
 - `src/cli.cr` — executable entry point
