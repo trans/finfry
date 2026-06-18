@@ -119,7 +119,10 @@ stdio, exposing the same safe command surface as tools so any MCP client (Claude
 Code, Claude Desktop, …) can read and update the ledger — with the harness
 providing the chat, history, and approval UI.
 
-Register it with an MCP client (standard config shape):
+The easiest path is `finfry init` (above) — it writes a `.mcp.json` into the book
+directory, so any MCP client opened there picks up a `finfry` server pinned to
+that book automatically. To register one manually instead (standard config
+shape):
 
 ```json
 {
@@ -129,7 +132,13 @@ Register it with an MCP client (standard config shape):
 }
 ```
 
-Or with the Claude Code CLI: `claude mcp add finfry -- finfry mcp`.
+Or with the Claude Code CLI — note the scopes: `--scope project` writes a shared
+`.mcp.json` in the directory (what `finfry init` does), `--scope local` is a
+private per-directory entry in your user config, and `--scope user` is global:
+
+```sh
+claude mcp add finfry --scope project -- finfry mcp
+```
 
 Notes:
 - The client (not finfry) gates each tool call, so writes execute when invoked —
@@ -232,12 +241,16 @@ directory; pass a path to use another):
 ```sh
 mkdir ~/finances && cd ~/finances && finfry init
 # Initialized finfry book at /home/you/finances/finfry.json
+# Wrote /home/you/finances/.mcp.json (finfry MCP server pinned to this book)
 ```
 
-Running finfry anywhere under that directory then uses that book. This pairs well
-with a directory-scoped MCP registration (`--scope local`) so only sessions
-started there can touch those books. Without a book in scope, finfry uses the
-global ledger, so casual single-book use still works anywhere.
+Running finfry anywhere under that directory then uses that book. `init` also
+writes a **`.mcp.json`** registering a `finfry` [MCP](#use-finfry-inside-an-agent-harness-mcp)
+server pinned to that book — so an MCP client (Claude Code, …) opened in that
+directory gets AI access to *that book only*, with no per-book setup. (Pass
+`--no-mcp` to skip it; an existing `.mcp.json` is merged, not overwritten.)
+Without a book in scope, finfry uses the global ledger, so casual single-book use
+still works anywhere.
 
 Writes are atomic (temp file + rename), and an older single-entry ledger is
 migrated to double-entry on first load (the original is kept as a `.bak`).

@@ -448,6 +448,22 @@ describe Finfry::MCP do
   end
 end
 
+describe "Finfry::App.merge_mcp_config" do
+  it "adds a finfry server pinned to the book when there's no config" do
+    cfg = JSON.parse(Finfry::App.merge_mcp_config(nil, "/books/p/finfry.json"))
+    cfg["mcpServers"]["finfry"]["command"].should eq("finfry")
+    cfg["mcpServers"]["finfry"]["args"].should eq(["mcp"])
+    cfg["mcpServers"]["finfry"]["env"]["FINFRY_DATA"].should eq("/books/p/finfry.json")
+  end
+
+  it "preserves other servers when merging" do
+    existing = %({"mcpServers":{"other":{"command":"x","args":[]}}})
+    cfg = JSON.parse(Finfry::App.merge_mcp_config(existing, "/b/finfry.json"))
+    cfg["mcpServers"]["other"]["command"].should eq("x")
+    cfg["mcpServers"]["finfry"]?.should_not be_nil
+  end
+end
+
 describe Finfry::App do
   it "exposes finfry commands as agent tools" do
     path = File.tempname("finfry_app", ".json")

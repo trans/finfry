@@ -235,6 +235,7 @@ module Finfry
         positional: [path]
         properties:
           path: {type: string, description: "Directory for the book (defaults to the current directory)"}
+          "no-mcp": {type: boolean, description: "Skip writing a .mcp.json for AI/harness access"}
         YAML
 
       cli.subcommand "path", yaml: <<-YAML
@@ -605,10 +606,33 @@ module Finfry
 
     private def cmd_init(r : Jargon::Result) : Nil
       target = r["path"]?.try(&.as_s) || Dir.current
-      path = File.join(target, Store::BOOK_FILE)
-      raise Error.new("already a finfry book: #{path}") if File.exists?(path)
-      Store.new(path).save
-      puts "Initialized finfry book at #{path}"
+      book = File.expand_path(File.join(target, Store::BOOK_FILE))
+      raise Error.new("already a finfry book: #{book}") if File.exists?(book)
+
+      Store.new(book).save
+      puts "Initialized finfry book at #{book}"
+
+      write_mcp_config(File.dirname(book), book) unless r["no-mcp"]?.try(&.as_bool)
+    end
+
+    # Write (or merge into) a .mcp.json next to the book so any MCP client opened
+    # in this directory gets a `finfry` server pinned to this book — no manual
+    # `claude mcp add` per book. Other servers in an existing file are preserved.
+    private def write_mcp_config(dir : String, book : String) : Nil
+      path = File.join(dir, ".mcp.json")
+      existing = File.exists?(path) ? File.read(path) : nil
+      File.write(path, App.merge_mcp_config(existing, book) + "\n")
+      puts "Wrote #{path} (finfry MCP server pinned to this book)"
+    end
+
+    # Merge a `finfry` MCP server (pinned to `book` via FINFRY_DATA) into an
+    # existing .mcp.json document (or a fresh one), preserving any other servers.
+    def self.merge_mcp_config(existing : String?, book : String) : String
+      root = existing ? JSON.parse(existing).as_h.dup : {} of String => JSON::Any
+      servers = root["mcpServers"]?.try(&.as_h).try(&.dup) || {} of String => JSON::Any
+      servers["finfry"] = JSON.parse(%({"command":"finfry","args":["mcp"],"env":{"FINFRY_DATA":#{book.to_json}}}))
+      root["mcpServers"] = JSON::Any.new(servers)
+      JSON::Any.new(root).to_pretty_json
     end
 
     private def cmd_path(r : Jargon::Result) : Nil

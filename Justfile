@@ -32,10 +32,11 @@ install: release
     mv -f {{bindir}}/finfry.new {{bindir}}/finfry
     @echo "installed finfry -> {{bindir}}/finfry"
 
-# Register finfry as an MCP server with Claude Code (user scope).
+# Register finfry as an MCP server with Claude Code (local scope).
 mcp-add:
-    claude mcp add finfry --scope user -- finfry mcp
-
-# Remove the user-scope finfry MCP registration.
+    claude mcp add finfry --scope local -- finfry mcp
+    
+# Remove the local-scope finfry MCP registration.
 mcp-remove:
-    claude mcp remove finfry --scope user
+    claude mcp remove finfry --scope local
+
