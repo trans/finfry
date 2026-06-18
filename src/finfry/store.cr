@@ -198,6 +198,7 @@ module Finfry
     def changeset(summary : String, at : String, & : -> T) : T forall T
       return yield if @current_changeset # nested → join the enclosing one
 
+      @db.redo_snapshot = nil # a fresh action invalidates any pending redo
       cs = Changeset.new(0, at, summary)
       @current_changeset = cs
       result =
@@ -233,6 +234,10 @@ module Finfry
       return nil unless cs
 
       ids = cs.added_transaction_ids.to_set
+      removed = @db.transactions.select { |t| ids.includes?(t.id) }
+      redo_budgets = {} of String => Int64?
+      cs.budget_changes.each { |ch| redo_budgets[ch.account] = @db.budgets[ch.account]? }
+
       @db.transactions.reject! { |t| ids.includes?(t.id) }
       @db.next_id = cs.added_transaction_ids.min unless cs.added_transaction_ids.empty?
 
@@ -249,8 +254,30 @@ module Finfry
 
       @db.changesets.pop
       @db.next_changeset_id -= 1 if cs.id == @db.next_changeset_id - 1
+      @db.redo_snapshot = RedoSnapshot.new(cs, removed, redo_budgets)
       save
       cs
+    end
+
+    # Re-apply the change most recently removed by `undo_last`. Returns it, or
+    # nil if there's nothing to redo.
+    def redo_last : Changeset?
+      snap = @db.redo_snapshot
+      return nil unless snap
+
+      snap.transactions.each { |t| @db.transactions << t }
+      @db.next_id = (@db.transactions.map(&.id).max? || 0) + 1
+
+      snap.budgets.each do |account, value|
+        value ? (@db.budgets[account] = value) : @db.budgets.delete(account)
+      end
+      snap.changeset.declared_accounts.each { |a| @db.accounts << a unless @db.accounts.includes?(a) }
+
+      @db.changesets << snap.changeset
+      @db.next_changeset_id = snap.changeset.id + 1 if snap.changeset.id >= @db.next_changeset_id
+      @db.redo_snapshot = nil
+      save
+      snap.changeset
     end
 
     # Correct an *older* change the proper accounting way: append a reversing
@@ -261,6 +288,7 @@ module Finfry
       original = @db.changesets.find { |c| c.id == id }
       return nil unless original
       raise Error.new("change ##{id} is already reversed") if reversed?(id)
+      @db.redo_snapshot = nil
 
       reversal = Changeset.new(0, at, "reverse ##{original.id}: #{original.summary}")
       reversal.reverses = original.id

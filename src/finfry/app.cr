@@ -194,6 +194,11 @@ module Finfry
           id: {type: integer, description: "Change id to reverse (see 'history')"}
         YAML
 
+      cli.subcommand "redo", yaml: <<-YAML
+        type: object
+        description: Redo the change most recently removed by undo
+        YAML
+
       cli.subcommand "history", yaml: <<-YAML
         type: object
         description: Show the change history
@@ -263,6 +268,7 @@ module Finfry
       when "accounts rename" then cmd_accounts_rename(result)
       when "accounts policy" then cmd_accounts_policy(result)
       when "undo"            then cmd_undo(result)
+      when "redo"            then cmd_redo(result)
       when "history"         then cmd_history(result)
       when "path"            then cmd_path(result)
       when "delete"          then cmd_delete(result)
@@ -553,6 +559,14 @@ module Finfry
         puts "Undid ##{cs.id}: #{cs.summary}"
       else
         puts "Nothing to undo."
+      end
+    end
+
+    private def cmd_redo(r : Jargon::Result) : Nil
+      if cs = @store.redo_last
+        puts "Redid ##{cs.id}: #{cs.summary}"
+      else
+        puts "Nothing to redo."
       end
     end
 

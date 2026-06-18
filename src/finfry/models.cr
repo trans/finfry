@@ -142,6 +142,20 @@ module Finfry
     end
   end
 
+  # Enough to re-apply a change that `undo` removed. `budgets` maps each touched
+  # account to the value to restore (nil = the change had set no budget / removed
+  # it). Single-slot: only the most recently popped change can be redone.
+  struct RedoSnapshot
+    include JSON::Serializable
+
+    property changeset : Changeset
+    property transactions : Array(Transaction)
+    property budgets : Hash(String, Int64?)
+
+    def initialize(@changeset, @transactions, @budgets)
+    end
+  end
+
   # The full persisted state: an id counter, all transactions, per-account
   # monthly budget limits (cents), the declared chart of accounts, the
   # unknown-account policy, and the undo journal.
@@ -162,6 +176,10 @@ module Finfry
     # Undo journal — one entry per mutating operation, newest last.
     property changesets : Array(Changeset) = [] of Changeset
     property next_changeset_id : Int32 = 1
+
+    # The last change removed by `undo`, available for `redo` until the next
+    # mutation invalidates it.
+    property redo_snapshot : RedoSnapshot? = nil
 
     # Brand-new ledger only — seeds the starter chart. from_json does not call
     # this, so deserialized ledgers keep whatever chart they had (or none).

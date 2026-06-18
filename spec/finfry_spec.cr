@@ -179,6 +179,22 @@ describe Finfry::Store do
     end
   end
 
+  it "redoes the change most recently popped, until new activity invalidates it" do
+    with_store do |store|
+      store.changeset("a", "t1") { store.record("2026-06-01", "a", expense("Expenses:Food", 100)) }
+      store.undo_last
+      store.transactions.should be_empty
+
+      store.redo_last.not_nil!.summary.should eq("a")
+      store.transactions.size.should eq(1)
+      store.redo_last.should be_nil # consumed
+
+      store.undo_last
+      store.changeset("b", "t2") { store.record("2026-06-02", "b", expense("Expenses:Food", 200)) }
+      store.redo_last.should be_nil # new activity invalidated the redo
+    end
+  end
+
   it "reverses an older change by appending a mirror-image entry" do
     with_store do |store|
       store.changeset("rent", "t1") { store.record("2026-06-01", "rent", expense("Expenses:Housing", 120000)) }

@@ -67,7 +67,9 @@ works:
   and the audit trail is preserved, because you can't un-happen history that
   later entries sit on top of.
 
-`finfry history` lists changes and marks which have been reversed.
+`finfry redo` brings back the change `undo` just removed (single level; any new
+change invalidates it). `finfry history` lists changes and marks which have been
+reversed.
 
 ### Sign convention
 
@@ -135,6 +137,7 @@ finfry accounts                                        # accounts in use
 finfry history [-n 10]                                 # change history
 finfry undo                                            # remove the most recent change
 finfry undo 4                                          # reverse an older change (correcting entry)
+finfry redo                                            # bring back the change undo just removed
 finfry path                                            # print the active ledger file
 
 # Budgets (per account, rolled up over the subtree)
