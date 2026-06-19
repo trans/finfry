@@ -17,6 +17,12 @@ module Finfry
       cli.run(argv) { |result| dispatch(result) }
     rescue ex : Money::Error | Error
       abort_with(ex.message)
+    rescue ex : IO::Error
+      # Output pipe closed early (e.g. `finfry report | head`). Exit quietly like
+      # a well-behaved Unix tool — but re-raise anything that isn't a broken pipe
+      # (e.g. a real failure writing the ledger) so it still surfaces.
+      raise ex unless ex.os_error == Errno::EPIPE
+      exit 0
     end
 
     # All handler output flows through @out so the AI agent can capture a read
