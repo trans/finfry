@@ -220,9 +220,10 @@ module Finfry
     property cadence : String          # "monthly", etc.
     property next_date : String        # cursor: next occurrence to generate
     property postings : Array(Posting) # template; per-occurrence amount editable later
+    property kind : String = "fixed"   # "fixed" (use postings) | "interest" (amount computed)
     property active : Bool = true
 
-    def initialize(@id, @description, @cadence, @next_date, @postings, @active = true)
+    def initialize(@id, @description, @cadence, @next_date, @postings, @kind = "fixed", @active = true)
     end
   end
 

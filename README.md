@@ -97,6 +97,17 @@ finfry recurring off 2          # stop generating new occurrences
 (`--kind transfer`), with `--every <cadence>` and an optional `--start` date
 (back-date it to catch up missed cycles).
 
+**Credit-card interest** is a rule whose amount is *computed* each cycle from the
+card's `apr` metadata applied to what's owed:
+
+```sh
+finfry accounts set Liabilities:CreditCard apr 19.99   # (or pass --apr below)
+finfry recurring interest Liabilities:CreditCard --every monthly
+```
+Each cycle, `due` shows the computed charge (`apr × balance owed`, for that
+cadence's slice of the year) for you to review/adjust/post like any other; if
+nothing's owed, no charge is generated.
+
 Then review what's due and apply it in a stage-then-post cycle:
 
 ```sh

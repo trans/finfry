@@ -352,6 +352,29 @@ describe Finfry::Store do
     end
   end
 
+  it "computes interest from the card APR and balance owed" do
+    with_store do |store|
+      store.record("2026-06-01", "buy", [Finfry::Posting.new("Expenses:Housing", 100000_i64), Finfry::Posting.new("Liabilities:CreditCard", -100000_i64)]) # owe $1000
+      store.set_account_meta("Liabilities:CreditCard", "apr", "12")
+      store.add_recurring_rule("Interest", "monthly", "2026-06-15",
+        [Finfry::Posting.new("Expenses:Interest", 0_i64), Finfry::Posting.new("Liabilities:CreditCard", 0_i64)], kind: "interest")
+
+      store.generate_due("2026-06-19").should eq(1)
+      entry = store.due_entries.first
+      entry.postings.find { |p| p.account == "Expenses:Interest" }.not_nil!.amount.should eq(1000_i64)       # $10 = 12%/12 of $1000
+      entry.postings.find { |p| p.account == "Liabilities:CreditCard" }.not_nil!.amount.should eq(-1000_i64) # owe more
+    end
+  end
+
+  it "generates no interest entry when nothing is owed" do
+    with_store do |store|
+      store.set_account_meta("Liabilities:CreditCard", "apr", "12")
+      store.add_recurring_rule("Interest", "monthly", "2026-06-15",
+        [Finfry::Posting.new("Expenses:Interest", 0_i64), Finfry::Posting.new("Liabilities:CreditCard", 0_i64)], kind: "interest")
+      store.generate_due("2026-06-19").should eq(0)
+    end
+  end
+
   it "doesn't generate due entries for inactive rules" do
     with_store do |store|
       rule = store.add_recurring_rule("X", "monthly", "2026-06-01", expense("Expenses:Food", 100))

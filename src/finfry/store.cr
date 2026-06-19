@@ -172,8 +172,8 @@ module Finfry
       @db.recurring
     end
 
-    def add_recurring_rule(description : String, cadence : String, start_date : String, postings : Array(Posting)) : RecurringRule
-      rule = RecurringRule.new(@db.next_recurring_id, description, cadence, start_date, postings)
+    def add_recurring_rule(description : String, cadence : String, start_date : String, postings : Array(Posting), kind : String = "fixed") : RecurringRule
+      rule = RecurringRule.new(@db.next_recurring_id, description, cadence, start_date, postings, kind)
       @db.next_recurring_id += 1
       @db.recurring << rule
       save
@@ -198,7 +198,9 @@ module Finfry
         dates = Recurrence.occurrences(rule.next_date, rule.cadence, today)
         next if dates.empty?
         dates.each do |date|
-          @db.due_entries << DueEntry.new(@db.next_due_id, rule.id, date, rule.description, rule.postings.dup, rule.cadence)
+          postings = rule.kind == "interest" ? interest_postings(rule, date) : rule.postings.dup
+          next if postings.nil? # interest couldn't be computed (no APR / nothing owed) → skip this cycle
+          @db.due_entries << DueEntry.new(@db.next_due_id, rule.id, date, rule.description, postings, rule.cadence)
           @db.next_due_id += 1
           count += 1
         end
@@ -206,6 +208,27 @@ module Finfry
       end
       save if count > 0
       count
+    end
+
+    # Interest postings for an interest rule at `date`: the card's APR (from its
+    # metadata) applied to what was owed as of that date, for this cadence's slice
+    # of the year. Returns nil when there's no APR or nothing is owed.
+    private def interest_postings(rule : RecurringRule, date : String) : Array(Posting)?
+      card = rule.postings.find { |p| p.account.starts_with?("Liabilities") }
+      interest = rule.postings.find { |p| !p.account.starts_with?("Liabilities") }
+      return nil unless card && interest
+
+      apr = account_meta(card.account)["apr"]?.try(&.to_f?)
+      return nil unless apr
+
+      owed = -(balances(up_to: date)[card.account]? || 0_i64)
+      return nil if owed <= 0
+
+      rate = apr / 100.0 * Recurrence.days(rule.cadence) / 365.25
+      cents = (owed * rate).round.to_i64
+      return nil if cents <= 0
+
+      Finfry.postings_for("expense", cents, interest.account, card.account)
     end
 
     def due_entries : Array(DueEntry)

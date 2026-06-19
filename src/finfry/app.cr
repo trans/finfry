@@ -346,6 +346,19 @@ module Finfry
           memo: {type: string, short: m, description: "Note/memo", default: ""}
         required: [amount, account, every]
         YAML
+      recurring.subcommand "interest", yaml: <<-YAML
+        type: object
+        description: Add a computed interest rule (amount = card APR x balance owed, each cycle)
+        positional: [card]
+        properties:
+          card: {type: string, description: "The credit-card / liability account"}
+          account: {type: string, short: a, description: "Interest expense account (default Expenses:Interest)"}
+          every: {type: string, short: e, enum: [#{Recurrence.names.join(", ")}], description: "Cadence (default monthly)"}
+          apr: {type: string, short: r, description: "Set the card's APR %% (else uses its existing apr metadata)"}
+          start: {type: string, short: s, description: "First occurrence YYYY-MM-DD (default today)"}
+          memo: {type: string, short: m, description: "Note (default 'Interest on <card>')"}
+        required: [card]
+        YAML
       recurring.subcommand "list", yaml: <<-YAML
         type: object
         description: List recurring rules
@@ -442,6 +455,7 @@ module Finfry
       when "mcp"                  then cmd_mcp(result)
       when "delete"               then cmd_delete(result)
       when "recurring add"        then cmd_recurring_add(result)
+      when "recurring interest"   then cmd_recurring_interest(result)
       when "recurring list"       then cmd_recurring_list(result)
       when "recurring off"        then cmd_recurring_off(result)
       when "due list"             then cmd_due_list(result)
@@ -954,6 +968,26 @@ module Finfry
       puts "Added recurring ##{rule.id}: #{rule_label(rule)} every #{cadence}, next #{start}"
     end
 
+    private def cmd_recurring_interest(r : Jargon::Result) : Nil
+      card = r["card"].as_s
+      interest_acct = r["account"]?.try(&.as_s) || "Expenses:Interest"
+      cadence = r["every"]?.try(&.as_s) || "monthly"
+      raise Error.new("unknown recurrence #{cadence.inspect} (one of: #{Recurrence.names.join(", ")})") unless Recurrence.valid?(cadence)
+      start = r["start"]?.try(&.as_s) || today
+      validate_date!(start)
+
+      @store.set_account_meta(card, "apr", r["apr"].as_s) if r["apr"]?
+      apr = @store.account_meta(card)["apr"]?
+      raise Error.new("set the card's APR first: finfry accounts set #{card} apr <rate>  (or pass --apr)") unless apr
+
+      memo = r["memo"]?.try(&.as_s) || "Interest on #{card}"
+      postings = Finfry.postings_for("expense", 0_i64, interest_acct, card)
+      enforce_account_policy!(postings) # interest + card accounts must be known
+
+      rule = @store.add_recurring_rule(memo, cadence, start, postings, kind: "interest")
+      puts "Added recurring interest ##{rule.id}: #{card} @ #{apr}% → #{interest_acct}, #{cadence}, next #{start}"
+    end
+
     private def cmd_recurring_list(r : Jargon::Result) : Nil
       rules = @store.recurring_rules
       if rules.empty?
@@ -977,6 +1011,7 @@ module Finfry
     end
 
     private def rule_label(rule : RecurringRule) : String
+      return "#{rule.description} (computed)" if rule.kind == "interest"
       label_for(rule.description, rule.postings)
     end
 
