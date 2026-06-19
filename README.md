@@ -151,7 +151,7 @@ echo "netflix 15.49 monthly" | finfry ai --yes
 
 How it works:
 
-- **Read tools** (`list`, `balance`, `report`, `balance-sheet`, `daily`,
+- **Read tools** (`register`, `balance`, `report`, `balance-sheet`, `daily`,
   `accounts`, `history`, `recurring`, `due`) run immediately so the AI can answer
   and gather context.
 - **Write tools** (`spend`, `earn`, `transfer`, `budget`, `accounts add/rename`,
@@ -230,7 +230,7 @@ finfry add -m "market run" \
   Assets:Checking            # amount inferred: -50.00
 
 # Reports
-finfry list [-a Expenses:Food] [-m 2026-06] [-n 10]   # transactions
+finfry register [-a Expenses:Food] [-m 2026-06] [-n 10]   # transactions (the ledger register)
 finfry balance [Assets]                                # account balances (quick lookup)
 finfry report                                          # income statement (default)
 finfry report income [-m 2026-06]                      # income statement
@@ -250,7 +250,7 @@ finfry budget set Expenses:Food 400
 finfry budget list
 finfry budget rm Expenses:Food
 
-# Delete a transaction by id (shown in `list`)
+# Delete a transaction by id (shown in `register`)
 finfry delete 3
 ```
 

@@ -146,9 +146,9 @@ module Finfry
         required: [posts]
         YAML
 
-      cli.subcommand "list", yaml: <<-YAML
+      cli.subcommand "register", yaml: <<-YAML
         type: object
-        description: List transactions
+        description: List transactions (the ledger register)
         properties:
           account: {type: string, short: a, description: "Only transactions touching this account subtree"}
           month: {type: string, short: m, description: "Only this month (YYYY-MM)"}
@@ -433,7 +433,7 @@ module Finfry
       when "earn"                 then cmd_earn(result)
       when "transfer"             then cmd_transfer(result)
       when "add"                  then cmd_add(result)
-      when "list"                 then cmd_list(result)
+      when "register"             then cmd_register(result)
       when "balance"              then cmd_balance(result)
       when "report income"        then cmd_report(result)
       when "report balance-sheet" then cmd_balancesheet(result)
@@ -628,7 +628,7 @@ module Finfry
 
     # --- reports ---------------------------------------------------------
 
-    private def cmd_list(r : Jargon::Result) : Nil
+    private def cmd_register(r : Jargon::Result) : Nil
       txns = @store.transactions
       if account = r["account"]?.try(&.as_s)
         txns = txns.select(&.touches?(account))
@@ -1199,7 +1199,7 @@ module Finfry
     private def agent_tools_spec : Array(AgentTool)
       cadence = Recurrence.names.to_json
       [
-        AgentTool.new("list", "list", false, "List transactions; optional filters: account (subtree), month (YYYY-MM), limit.",
+        AgentTool.new("register", "register", false, "List transactions (the register); optional filters: account (subtree), month (YYYY-MM), limit.",
           JSON.parse(%({"type":"object","properties":{"account":{"type":"string"},"month":{"type":"string"},"limit":{"type":"integer"}}}))),
         AgentTool.new("balance", "balance", false, "Show account balances, optionally limited to an account subtree (prefix).",
           JSON.parse(%({"type":"object","properties":{"prefix":{"type":"string"}}}))),
