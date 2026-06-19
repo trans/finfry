@@ -101,7 +101,7 @@ module Finfry
           amount: {type: string, description: "Amount, e.g. 50 or 12.50"}
           account: {type: string, description: "Expense account, e.g. Expenses:Food:Coffee"}
           from: {type: string, short: f, description: "Account paid from", default: #{DEFAULT_ASSET_ACCOUNT}}
-          description: {type: string, short: m, description: "Note", default: ""}
+          memo: {type: string, short: m, description: "Note/memo", default: ""}
           date: {type: string, short: d, description: "Date YYYY-MM-DD (default today)"}
           recurrence: {type: string, short: r, description: "Recurs on a cadence", enum: [#{Recurrence.names.join(", ")}]}
         required: [amount, account]
@@ -115,7 +115,7 @@ module Finfry
           amount: {type: string, description: "Amount received"}
           account: {type: string, description: "Income account, e.g. Income:Salary"}
           to: {type: string, short: t, description: "Account received into", default: #{DEFAULT_ASSET_ACCOUNT}}
-          description: {type: string, short: m, description: "Note", default: ""}
+          memo: {type: string, short: m, description: "Note/memo", default: ""}
           date: {type: string, short: d, description: "Date YYYY-MM-DD (default today)"}
           recurrence: {type: string, short: r, description: "Recurs on a cadence", enum: [#{Recurrence.names.join(", ")}]}
         required: [amount, account]
@@ -129,7 +129,7 @@ module Finfry
           amount: {type: string, description: "Amount to move"}
           from: {type: string, short: f, description: "Source account"}
           to: {type: string, short: t, description: "Destination account"}
-          description: {type: string, short: m, description: "Note", default: ""}
+          memo: {type: string, short: m, description: "Note/memo", default: ""}
           date: {type: string, short: d, description: "Date YYYY-MM-DD (default today)"}
         required: [amount, from, to]
         YAML
@@ -140,7 +140,7 @@ module Finfry
         positional: [posts]
         properties:
           posts: {type: array, description: "ACCOUNT AMOUNT pairs; a trailing lone ACCOUNT is inferred to balance"}
-          description: {type: string, short: m, description: "Note", default: ""}
+          memo: {type: string, short: m, description: "Note/memo", default: ""}
           date: {type: string, short: d, description: "Date YYYY-MM-DD (default today)"}
           recurrence: {type: string, short: r, description: "Recurs on a cadence", enum: [#{Recurrence.names.join(", ")}]}
         required: [posts]
@@ -343,7 +343,7 @@ module Finfry
           kind: {type: string, enum: [expense, income, transfer], description: "Default expense"}
           every: {type: string, short: e, enum: [#{Recurrence.names.join(", ")}], description: "Cadence"}
           start: {type: string, short: s, description: "First occurrence date YYYY-MM-DD (default today)"}
-          description: {type: string, short: m, description: "Note", default: ""}
+          memo: {type: string, short: m, description: "Note/memo", default: ""}
         required: [amount, account, every]
         YAML
       recurring.subcommand "list", yaml: <<-YAML
@@ -981,7 +981,7 @@ module Finfry
     end
 
     private def desc_of(r : Jargon::Result) : String
-      r["description"]?.try(&.as_s) || ""
+      r["memo"]?.try(&.as_s) || ""
     end
 
     private def recurrence_of(r : Jargon::Result) : String?
@@ -1048,11 +1048,11 @@ module Finfry
         AgentTool.new("history", "history", false, "Recent change history (optional limit).",
           JSON.parse(%({"type":"object","properties":{"limit":{"type":"integer"}}}))),
         AgentTool.new("spend", "spend", true, "Record an expense. account = the Expenses:* account; from = the asset/liability paid from (default #{DEFAULT_ASSET_ACCOUNT}).",
-          JSON.parse(%({"type":"object","properties":{"amount":{"type":"string"},"account":{"type":"string"},"from":{"type":"string"},"description":{"type":"string"},"date":{"type":"string"},"recurrence":{"type":"string","enum":#{cadence}}},"required":["amount","account"]}))),
+          JSON.parse(%({"type":"object","properties":{"amount":{"type":"string"},"account":{"type":"string"},"from":{"type":"string"},"memo":{"type":"string"},"date":{"type":"string"},"recurrence":{"type":"string","enum":#{cadence}}},"required":["amount","account"]}))),
         AgentTool.new("earn", "earn", true, "Record income. account = the Income:* account; to = the asset received into (default #{DEFAULT_ASSET_ACCOUNT}).",
-          JSON.parse(%({"type":"object","properties":{"amount":{"type":"string"},"account":{"type":"string"},"to":{"type":"string"},"description":{"type":"string"},"date":{"type":"string"},"recurrence":{"type":"string","enum":#{cadence}}},"required":["amount","account"]}))),
+          JSON.parse(%({"type":"object","properties":{"amount":{"type":"string"},"account":{"type":"string"},"to":{"type":"string"},"memo":{"type":"string"},"date":{"type":"string"},"recurrence":{"type":"string","enum":#{cadence}}},"required":["amount","account"]}))),
         AgentTool.new("transfer", "transfer", true, "Move money between two accounts (account-to-account; neither income nor expense).",
-          JSON.parse(%({"type":"object","properties":{"amount":{"type":"string"},"from":{"type":"string"},"to":{"type":"string"},"description":{"type":"string"},"date":{"type":"string"}},"required":["amount","from","to"]}))),
+          JSON.parse(%({"type":"object","properties":{"amount":{"type":"string"},"from":{"type":"string"},"to":{"type":"string"},"memo":{"type":"string"},"date":{"type":"string"}},"required":["amount","from","to"]}))),
         AgentTool.new("budget_set", "budget set", true, "Set a monthly budget for an account.",
           JSON.parse(%({"type":"object","properties":{"account":{"type":"string"},"amount":{"type":"string"}},"required":["account","amount"]}))),
         AgentTool.new("budget_remove", "budget rm", true, "Remove an account's budget.",
