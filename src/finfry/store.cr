@@ -188,6 +188,36 @@ module Finfry
       true
     end
 
+    # Materialize every occurrence due up to `today` into the queue, advancing
+    # each rule's cursor so nothing is generated twice. Returns how many were
+    # added.
+    def generate_due(today : String) : Int32
+      count = 0
+      @db.recurring.each do |rule|
+        next unless rule.active
+        dates = Recurrence.occurrences(rule.next_date, rule.cadence, today)
+        next if dates.empty?
+        dates.each do |date|
+          @db.due_entries << DueEntry.new(@db.next_due_id, rule.id, date, rule.description, rule.postings.dup, rule.cadence)
+          @db.next_due_id += 1
+          count += 1
+        end
+        rule.next_date = Recurrence.advance(dates.last, rule.cadence)
+      end
+      save if count > 0
+      count
+    end
+
+    def due_entries : Array(DueEntry)
+      @db.due_entries
+    end
+
+    def remove_due_entries(ids : Array(Int32)) : Nil
+      set = ids.to_set
+      @db.due_entries.reject! { |e| set.includes?(e.id) }
+      save
+    end
+
     # --- account metadata -----------------------------------------------
 
     def account_meta(account : String) : Hash(String, String)

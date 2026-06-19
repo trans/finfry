@@ -342,6 +342,34 @@ describe Finfry::Recurrence do
 end
 
 describe Finfry::Store do
+  it "generates due entries from rules, advances the cursor, and is idempotent" do
+    with_store do |store|
+      store.add_recurring_rule("Netflix", "monthly", "2026-04-01", expense("Expenses:Subs", 1549))
+      store.generate_due("2026-06-19").should eq(3) # Apr, May, Jun
+      store.due_entries.map(&.date).should eq(["2026-04-01", "2026-05-01", "2026-06-01"])
+      store.recurring_rules.first.next_date.should eq("2026-07-01") # cursor advanced
+      store.generate_due("2026-06-19").should eq(0)                 # nothing regenerated
+    end
+  end
+
+  it "doesn't generate due entries for inactive rules" do
+    with_store do |store|
+      rule = store.add_recurring_rule("X", "monthly", "2026-06-01", expense("Expenses:Food", 100))
+      store.deactivate_rule(rule.id)
+      store.generate_due("2026-06-19").should eq(0)
+    end
+  end
+
+  it "removes due entries by id" do
+    with_store do |store|
+      store.add_recurring_rule("Netflix", "monthly", "2026-04-01", expense("Expenses:Subs", 1549))
+      store.generate_due("2026-06-19")
+      ids = store.due_entries.map(&.id)
+      store.remove_due_entries([ids.first])
+      store.due_entries.map(&.id).should eq(ids[1..])
+    end
+  end
+
   it "adds and turns off recurring rules" do
     with_store do |store|
       rule = store.add_recurring_rule("Netflix", "monthly", "2026-06-01", expense("Expenses:Subs:Netflix", 1549))

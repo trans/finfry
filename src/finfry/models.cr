@@ -226,6 +226,25 @@ module Finfry
     end
   end
 
+  # A generated-but-not-yet-resolved occurrence of a recurring rule, waiting in
+  # the due queue. Status is staged (pending → ok | skip) and applied by
+  # `due post`; the row is removed once resolved. A class because it's edited in
+  # place (amount/date/memo, status).
+  class DueEntry
+    include JSON::Serializable
+
+    property id : Int32
+    property rule_id : Int32
+    property date : String
+    property description : String
+    property postings : Array(Posting)
+    property cadence : String            # copied from the rule, so a posted entry can be tagged
+    property status : String = "pending" # pending | ok | skip
+
+    def initialize(@id, @rule_id, @date, @description, @postings, @cadence, @status = "pending")
+    end
+  end
+
   # The full persisted state: an id counter, all transactions, per-account
   # monthly budget limits (cents), the declared chart of accounts, the
   # unknown-account policy, and the undo journal.
@@ -250,6 +269,10 @@ module Finfry
     # Recurring rules + their id counter.
     property recurring : Array(RecurringRule) = [] of RecurringRule
     property next_recurring_id : Int32 = 1
+
+    # The due queue (generated occurrences awaiting review) + its id counter.
+    property due_entries : Array(DueEntry) = [] of DueEntry
+    property next_due_id : Int32 = 1
 
     # Undo journal — one entry per mutating operation, newest last.
     property changesets : Array(Changeset) = [] of Changeset

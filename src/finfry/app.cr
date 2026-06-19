@@ -361,6 +361,53 @@ module Finfry
       recurring.default_subcommand("list")
       cli.subcommand "recurring", recurring
 
+      due = Jargon.new("due")
+      due.subcommand "list", yaml: <<-YAML
+        type: object
+        description: Show the due queue (occurrences awaiting review)
+        YAML
+      due.subcommand "ok", yaml: <<-YAML
+        type: object
+        description: Stage entries to post (ids, or 'all')
+        positional: [ids]
+        properties:
+          ids: {type: array, description: "Entry ids, or 'all'"}
+        required: [ids]
+        YAML
+      due.subcommand "skip", yaml: <<-YAML
+        type: object
+        description: Stage entries to drop (ids, or 'all')
+        positional: [ids]
+        properties:
+          ids: {type: array, description: "Entry ids, or 'all'"}
+        required: [ids]
+        YAML
+      due.subcommand "reset", yaml: <<-YAML
+        type: object
+        description: Clear staged decisions back to pending (ids, or 'all')
+        positional: [ids]
+        properties:
+          ids: {type: array, description: "Entry ids, or 'all'"}
+        required: [ids]
+        YAML
+      due.subcommand "edit", yaml: <<-YAML
+        type: object
+        description: Adjust a due entry before posting (marks it ok)
+        positional: [id]
+        properties:
+          id: {type: integer}
+          amount: {type: string, short: a, description: "New amount"}
+          date: {type: string, short: d, description: "New date YYYY-MM-DD"}
+          memo: {type: string, short: m, description: "New note/memo"}
+        required: [id]
+        YAML
+      due.subcommand "post", yaml: <<-YAML
+        type: object
+        description: Apply staged decisions — post the ok'd, drop the skipped
+        YAML
+      due.default_subcommand("list")
+      cli.subcommand "due", due
+
       cli
     end
 
@@ -397,6 +444,12 @@ module Finfry
       when "recurring add"        then cmd_recurring_add(result)
       when "recurring list"       then cmd_recurring_list(result)
       when "recurring off"        then cmd_recurring_off(result)
+      when "due list"             then cmd_due_list(result)
+      when "due ok"               then cmd_due_stage(result, "ok")
+      when "due skip"             then cmd_due_stage(result, "skip")
+      when "due reset"            then cmd_due_stage(result, "pending")
+      when "due edit"             then cmd_due_edit(result)
+      when "due post"             then cmd_due_post(result)
       when "budget set"           then cmd_budget_set(result)
       when "budget list"          then cmd_budget_list(result)
       when "budget rm"            then cmd_budget_rm(result)
@@ -908,14 +961,10 @@ module Finfry
         return
       end
       rules.each do |rule|
-        if rule.active
-          due = Recurrence.occurrences(rule.next_date, rule.cadence, today).size
-          tail = due > 0 ? "  (#{due} due)" : ""
-        else
-          tail = "  (off)"
-        end
+        tail = rule.active ? "" : "  (off)"
         puts "##{rule.id}  %-9s  next %s  %s%s" % {rule.cadence, rule.next_date, rule_label(rule), tail}
       end
+      puts "(run 'finfry due' to review what's due)"
     end
 
     private def cmd_recurring_off(r : Jargon::Result) : Nil
@@ -928,9 +977,91 @@ module Finfry
     end
 
     private def rule_label(rule : RecurringRule) : String
-      primary = rule.postings.first
-      base = rule.description.empty? ? rule.postings.map(&.account).join(" / ") : rule.description
-      "#{base} (#{Money.format(primary.amount.abs)})"
+      label_for(rule.description, rule.postings)
+    end
+
+    private def due_label(entry : DueEntry) : String
+      label_for(entry.description, entry.postings)
+    end
+
+    private def label_for(description : String, postings : Array(Posting)) : String
+      base = description.empty? ? postings.map(&.account).join(" / ") : description
+      "#{base} (#{Money.format(postings.first.amount.abs)})"
+    end
+
+    private def cmd_due_list(r : Jargon::Result) : Nil
+      @store.generate_due(today)
+      entries = @store.due_entries.sort_by { |e| {e.date, e.id} }
+      if entries.empty?
+        puts "Nothing due."
+        return
+      end
+      entries.each do |e|
+        mark = case e.status
+               when "ok"   then "  ✓ ok"
+               when "skip" then "  ✗ skip"
+               else             ""
+               end
+        puts "##{e.id}  #{e.date}  #{due_label(e)}#{mark}"
+      end
+      staged = entries.count { |e| e.status != "pending" }
+      puts "(#{staged} staged — run 'finfry due post' to apply)" if staged > 0
+    end
+
+    private def cmd_due_stage(r : Jargon::Result, status : String) : Nil
+      @store.generate_due(today)
+      targets = due_targets(r)
+      if targets.empty?
+        puts "No matching due entries."
+        return
+      end
+      targets.each { |e| e.status = status }
+      @store.save
+      verb = status == "pending" ? "reset" : status
+      puts "#{verb}: #{targets.map(&.id).sort.join(", ")}"
+    end
+
+    private def due_targets(r : Jargon::Result) : Array(DueEntry)
+      tokens = r["ids"].as_a.map(&.as_s)
+      return @store.due_entries if tokens.includes?("all")
+      ids = tokens.compact_map(&.to_i?)
+      @store.due_entries.select { |e| ids.includes?(e.id) }
+    end
+
+    private def cmd_due_edit(r : Jargon::Result) : Nil
+      @store.generate_due(today)
+      id = r["id"].as_i
+      entry = @store.due_entries.find { |e| e.id == id }
+      raise Error.new("no due entry ##{id}") unless entry
+
+      if a = r["amount"]?.try(&.as_s)
+        amount = Money.parse(a)
+        entry.postings = entry.postings.map { |p| Posting.new(p.account, p.amount < 0 ? -amount : amount) }
+      end
+      if d = r["date"]?.try(&.as_s)
+        validate_date!(d)
+        entry.date = d
+      end
+      if m = r["memo"]?.try(&.as_s)
+        entry.description = m
+      end
+      entry.status = "ok"
+      @store.save
+      puts "##{entry.id}  #{entry.date}  #{due_label(entry)}  ✓ ok"
+    end
+
+    private def cmd_due_post(r : Jargon::Result) : Nil
+      @store.generate_due(today)
+      oks = @store.due_entries.select { |e| e.status == "ok" }
+      skips = @store.due_entries.select { |e| e.status == "skip" }
+      if oks.empty? && skips.empty?
+        puts "Nothing staged. Use 'finfry due ok <id>' or 'finfry due skip <id>' first."
+        return
+      end
+
+      oks.each { |e| commit(e.date, e.description, e.postings, e.cadence) }
+      @store.remove_due_entries((oks + skips).map(&.id))
+      puts "Posted #{oks.size}, skipped #{skips.size}."
     end
 
     private def cmd_budget_set(r : Jargon::Result) : Nil

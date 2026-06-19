@@ -81,6 +81,37 @@ works:
 change invalidates it). `finfry history` lists changes and marks which have been
 reversed.
 
+### Recurring entries
+
+Define a recurring commitment, and finfry generates a **queue of due occurrences**
+you review and approve — nothing posts automatically.
+
+```sh
+finfry recurring add 15.49 Expenses:Subscriptions:Netflix -m Netflix -e monthly
+finfry recurring add 1200 Expenses:Housing -m Rent -e monthly --from Assets:Savings
+finfry recurring list
+finfry recurring off 2          # stop generating new occurrences
+```
+
+`recurring add` works for expenses, income (`--kind income`), or transfers
+(`--kind transfer`), with `--every <cadence>` and an optional `--start` date
+(back-date it to catch up missed cycles).
+
+Then review what's due and apply it in a stage-then-post cycle:
+
+```sh
+finfry due                      # list due occurrences (catches up since last time)
+finfry due ok 1 3               # stage entries to post (or: due ok all)
+finfry due skip 2               # stage to drop (won't reappear)
+finfry due edit 4 --amount 64.20  # adjust a variable bill (marks it ok)
+finfry due reset 3              # clear a staged decision back to pending
+finfry due post                 # apply: post the ok'd, drop the skipped
+```
+
+Unstaged entries just stay pending for next time. Each posted occurrence is a
+normal [undoable](#undo--corrections) transaction (tagged with its cadence, so it
+shows in `report daily`).
+
 ### Sign convention
 
 Amounts are signed cents internally. `Assets`/`Expenses` are debit-normal
