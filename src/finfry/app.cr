@@ -164,6 +164,13 @@ module Finfry
           month: {type: string, short: m, description: "Month as YYYY-MM (default current)"}
         YAML
 
+      cli.subcommand "balancesheet", yaml: <<-YAML
+        type: object
+        description: Balance sheet (Assets / Liabilities / Equity) with an integrity check
+        properties:
+          date: {type: string, short: d, description: "As of date YYYY-MM-DD (default today)"}
+        YAML
+
       cli.subcommand "daily", yaml: <<-YAML
         type: object
         description: Per-day cost of recurring items
@@ -298,6 +305,7 @@ module Finfry
       when "list"            then cmd_list(result)
       when "balance"         then cmd_balance(result)
       when "report"          then cmd_report(result)
+      when "balancesheet"    then cmd_balancesheet(result)
       when "daily"           then cmd_daily(result)
       when "accounts list"   then cmd_accounts_list(result)
       when "accounts add"    then cmd_accounts_add(result)
@@ -556,6 +564,35 @@ module Finfry
         amount = flip ? -cents : cents
         puts "  %-24s  %12s" % {account, Money.format(amount)}
       end
+    end
+
+    private def cmd_balancesheet(r : Jargon::Result) : Nil
+      as_of = r["date"]?.try(&.as_s)
+      validate_date!(as_of) if as_of
+      sheet = Finfry.balance_sheet(@store.balances(up_to: as_of))
+
+      puts "Balance sheet — #{as_of || today}"
+      bs_section("Assets", sheet.assets, sheet.total_assets)
+      bs_section("Liabilities", sheet.liabilities, sheet.total_liabilities)
+
+      puts "Equity"
+      sheet.equity.each { |(account, value)| puts "  %-30s  %12s" % {account, Money.format(value)} }
+      puts "  %-30s  %12s" % {"Net income (Income − Expenses)", Money.format(sheet.net_income)}
+      puts "  %-30s  %12s" % {"Total equity", Money.format(sheet.total_equity)}
+
+      puts "─" * 48
+      rhs = sheet.total_liabilities + sheet.total_equity
+      if sheet.balanced?
+        puts "Assets = Liabilities + Equity   ✓  (#{Money.format(sheet.total_assets)} = #{Money.format(rhs)})"
+      else
+        puts "Assets = Liabilities + Equity   ⚠  off by #{Money.format(sheet.discrepancy)} (ledger may be tampered)"
+      end
+    end
+
+    private def bs_section(label : String, entries : Array({String, Int64}), total : Int64) : Nil
+      puts label
+      entries.each { |(account, value)| puts "  %-30s  %12s" % {account, Money.format(value)} }
+      puts "  %-30s  %12s" % {"Total #{label.downcase}", Money.format(total)}
     end
 
     private def cmd_daily(r : Jargon::Result) : Nil
@@ -842,6 +879,8 @@ module Finfry
           JSON.parse(%({"type":"object","properties":{"prefix":{"type":"string"}}}))),
         AgentTool.new("report", "report", false, "Income statement for a month (YYYY-MM; default current).",
           JSON.parse(%({"type":"object","properties":{"month":{"type":"string"}}}))),
+        AgentTool.new("balancesheet", "balancesheet", false, "Balance sheet: Assets / Liabilities / Equity with subtotals and the accounting-equation integrity check.",
+          JSON.parse(%({"type":"object","properties":{"date":{"type":"string"}}}))),
         AgentTool.new("daily", "daily", false, "Per-day amortized cost of recurring items.",
           JSON.parse(%({"type":"object","properties":{}}))),
         AgentTool.new("accounts", "accounts list", false, "List the known accounts.",

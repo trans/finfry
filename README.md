@@ -179,6 +179,7 @@ finfry add -m "market run" \
 finfry list [-a Expenses:Food] [-m 2026-06] [-n 10]   # transactions
 finfry balance [Assets]                                # account balances
 finfry report [-m 2026-06]                             # income statement
+finfry balancesheet [-d 2026-06-30]                    # balance sheet + integrity check
 finfry daily                                           # per-day cost of recurring items
 finfry accounts                                        # accounts in use
 finfry history [-n 10]                                 # change history

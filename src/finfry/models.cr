@@ -100,6 +100,57 @@ module Finfry
   # (declared in the chart or already used by a posting).
   ACCOUNT_POLICIES = %w[strict guard off]
 
+  # A point-in-time balance sheet: accounts sectioned into Assets / Liabilities /
+  # Equity (each as {account, display_amount} with credit-normal sides flipped to
+  # read positive), plus net income (Income − Expenses) folded into equity. Since
+  # every transaction balances, a non-zero `discrepancy` means tampered data.
+  struct BalanceSheet
+    getter assets : Array({String, Int64})
+    getter liabilities : Array({String, Int64})
+    getter equity : Array({String, Int64})
+    getter net_income : Int64
+
+    def initialize(@assets, @liabilities, @equity, @net_income)
+    end
+
+    def total_assets : Int64
+      @assets.sum(0_i64) { |e| e[1] }
+    end
+
+    def total_liabilities : Int64
+      @liabilities.sum(0_i64) { |e| e[1] }
+    end
+
+    def total_equity : Int64
+      @equity.sum(0_i64) { |e| e[1] } + @net_income
+    end
+
+    # Assets − (Liabilities + Equity). Zero for valid data.
+    def discrepancy : Int64
+      total_assets - total_liabilities - total_equity
+    end
+
+    def balanced? : Bool
+      discrepancy.zero?
+    end
+  end
+
+  # Build a balance sheet from raw account balances (account => signed cents).
+  def self.balance_sheet(balances : Hash(String, Int64)) : BalanceSheet
+    section = ->(prefix : String, flip : Bool) do
+      balances
+        .select { |account, _| account == prefix || account.starts_with?("#{prefix}:") }
+        .map { |account, value| {account, flip ? -value : value} }
+        .reject { |entry| entry[1].zero? }
+        .sort_by { |entry| entry[0] }
+    end
+
+    income = balances.sum(0_i64) { |(a, v)| a == "Income" || a.starts_with?("Income:") ? -v : 0_i64 }
+    expenses = balances.sum(0_i64) { |(a, v)| a == "Expenses" || a.starts_with?("Expenses:") ? v : 0_i64 }
+
+    BalanceSheet.new(section.call("Assets", false), section.call("Liabilities", true), section.call("Equity", true), income - expenses)
+  end
+
   # One budget value before a changeset altered it. `previous` is nil when the
   # account had no budget (so undo removes the key rather than restoring a value).
   struct BudgetChange

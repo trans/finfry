@@ -365,6 +365,39 @@ describe "Finfry.postings_for" do
   end
 end
 
+describe "Finfry.balance_sheet" do
+  it "sections accounts and balances an opening-balance ledger" do
+    balances = {"Assets:Checking:TD" => 3902_i64, "Equity:OpeningBalances" => -3902_i64}
+    bs = Finfry.balance_sheet(balances)
+    bs.total_assets.should eq(3902)
+    bs.total_equity.should eq(3902) # opening equity, no net income yet
+    bs.net_income.should eq(0)
+    bs.balanced?.should be_true
+  end
+
+  it "folds net income (income − expenses) into equity" do
+    balances = {"Assets:Checking" => 7000_i64, "Income:Salary" => -10000_i64, "Expenses:Food" => 3000_i64}
+    bs = Finfry.balance_sheet(balances)
+    bs.net_income.should eq(7000) # 100 earned − 30 spent
+    bs.total_assets.should eq(7000)
+    bs.total_equity.should eq(7000) # net income only
+    bs.balanced?.should be_true
+  end
+
+  it "flips liabilities to read positive (credit-card purchase)" do
+    balances = {"Expenses:Food" => 5000_i64, "Liabilities:CreditCard" => -5000_i64}
+    bs = Finfry.balance_sheet(balances)
+    bs.total_liabilities.should eq(5000) # owed, shown positive
+    bs.net_income.should eq(-5000)       # spent 50, earned nothing
+    bs.total_assets.should eq(0)
+    bs.balanced?.should be_true # 0 = 50 + (-50)
+  end
+
+  it "flags an imbalance for tampered data" do
+    Finfry.balance_sheet({"Assets:Checking" => 100_i64}).balanced?.should be_false
+  end
+end
+
 describe Finfry::AI do
   describe ".parse_turn" do
     it "collects text and tool calls, not done while a tool is requested" do
