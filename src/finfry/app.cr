@@ -153,6 +153,11 @@ module Finfry
           account: {type: string, short: a, description: "Only transactions touching this account subtree"}
           month: {type: string, short: m, description: "Only this month (YYYY-MM)"}
           limit: {type: integer, short: n, description: "Show only the most recent N"}
+          since: {type: string, short: s, description: "On or after this date (YYYY-MM-DD)"}
+          until: {type: string, short: u, description: "On or before this date (YYYY-MM-DD)"}
+          min: {type: string, description: "Only transactions whose largest leg is at least this"}
+          max: {type: string, description: "Only transactions whose largest leg is at most this"}
+          match: {type: string, short: q, description: "Only transactions whose memo contains this text"}
         YAML
 
       cli.subcommand "balance", yaml: <<-YAML
@@ -421,6 +426,37 @@ module Finfry
       due.default_subcommand("list")
       cli.subcommand "due", due
 
+      reconcile = Jargon.new("reconcile")
+      reconcile.subcommand "status", yaml: <<-YAML
+        type: object
+        description: Reconciliation status for an account (vs an optional statement balance)
+        positional: [account, statement]
+        properties:
+          account: {type: string, description: "The account to reconcile"}
+          statement: {type: string, short: s, description: "Statement ending balance to check against"}
+        required: [account]
+        YAML
+      reconcile.subcommand "clear", yaml: <<-YAML
+        type: object
+        description: Mark transactions cleared for an account (ids, or 'all')
+        positional: [account, ids]
+        properties:
+          account: {type: string}
+          ids: {type: array, description: "Transaction ids, or 'all'"}
+        required: [account, ids]
+        YAML
+      reconcile.subcommand "unclear", yaml: <<-YAML
+        type: object
+        description: Unmark transactions for an account (ids, or 'all')
+        positional: [account, ids]
+        properties:
+          account: {type: string}
+          ids: {type: array, description: "Transaction ids, or 'all'"}
+        required: [account, ids]
+        YAML
+      reconcile.default_subcommand("status")
+      cli.subcommand "reconcile", reconcile
+
       cli
     end
 
@@ -464,6 +500,9 @@ module Finfry
       when "due reset"            then cmd_due_stage(result, "pending")
       when "due edit"             then cmd_due_edit(result)
       when "due post"             then cmd_due_post(result)
+      when "reconcile status"     then cmd_reconcile_status(result)
+      when "reconcile clear"      then cmd_reconcile_mark(result, true)
+      when "reconcile unclear"    then cmd_reconcile_mark(result, false)
       when "budget set"           then cmd_budget_set(result)
       when "budget list"          then cmd_budget_list(result)
       when "budget rm"            then cmd_budget_rm(result)
@@ -636,6 +675,24 @@ module Finfry
       if month = r["month"]?.try(&.as_s)
         txns = txns.select(&.in_month?(month))
       end
+      if since = r["since"]?.try(&.as_s)
+        txns = txns.select { |t| t.date >= since }
+      end
+      if before = r["until"]?.try(&.as_s)
+        txns = txns.select { |t| t.date <= before }
+      end
+      if min = r["min"]?.try(&.as_s)
+        floor = Money.parse(min)
+        txns = txns.select { |t| txn_magnitude(t) >= floor }
+      end
+      if max = r["max"]?.try(&.as_s)
+        ceil = Money.parse(max)
+        txns = txns.select { |t| txn_magnitude(t) <= ceil }
+      end
+      if q = r["match"]?.try(&.as_s)
+        needle = q.downcase
+        txns = txns.select { |t| t.description.downcase.includes?(needle) }
+      end
       txns = txns.sort_by { |t| {t.date, t.id} }
       if limit = r["limit"]?.try(&.as_i)
         txns = txns.last(limit)
@@ -653,6 +710,74 @@ module Finfry
         puts header
         puts render(t)
       end
+    end
+
+    # The reconciliation view: cleared balance vs ledger balance, the list of
+    # not-yet-cleared transactions touching the account, and — if a statement
+    # balance is given — whether the two agree.
+    private def cmd_reconcile_status(r : Jargon::Result) : Nil
+      account = r["account"].as_s
+      cleared_raw = @store.cleared_balance(account)
+      ledger_raw = @store.balances[account]? || 0_i64
+      cleared = display_cents(account, cleared_raw)
+      ledger = display_cents(account, ledger_raw)
+      uncleared = uncleared_transactions(account)
+
+      puts "Reconcile #{account}"
+      puts "  cleared balance:  %14s" % Money.format(cleared)
+      puts "  ledger balance:   %14s" % Money.format(ledger)
+
+      unless uncleared.empty?
+        puts "  uncleared (#{uncleared.size}):"
+        uncleared.each do |t|
+          amount = display_cents(account, t.postings.sum(0_i64) { |p| p.account == account ? p.amount : 0_i64 })
+          memo = t.description.empty? ? "" : "  #{t.description}"
+          puts "    ##{t.id}  #{t.date}  %12s%s" % {Money.format(amount), memo}
+        end
+      end
+
+      if s = r["statement"]?.try(&.as_s)
+        statement = Money.parse(s)
+        diff = statement - cleared
+        puts "  statement:        %14s" % Money.format(statement)
+        if diff.zero?
+          puts "  ✓ reconciled"
+        else
+          puts "  ⚠ off by %s — clear/unclear until cleared balance matches the statement" % Money.format(diff)
+        end
+      end
+    end
+
+    # Mark (clear:true) or unmark (clear:false) transactions for an account.
+    # `ids` is a list of transaction ids or the token "all" (all uncleared when
+    # clearing, all currently-cleared when unclearing).
+    private def cmd_reconcile_mark(r : Jargon::Result, clear : Bool) : Nil
+      account = r["account"].as_s
+      tokens = r["ids"].as_a.map(&.to_s)
+      ids =
+        if tokens.includes?("all")
+          clear ? uncleared_transactions(account).map(&.id) : @store.cleared_ids(account).dup
+        else
+          tokens.compact_map(&.to_i?)
+        end
+
+      if ids.empty?
+        puts clear ? "Nothing to clear." : "Nothing to unclear."
+        return
+      end
+
+      changed = @store.set_cleared(account, ids, clear)
+      verb = clear ? "Cleared" : "Uncleared"
+      puts "#{verb} #{changed} transaction(s) for #{account}."
+    end
+
+    # Transactions with a posting directly on `account` (exact, not subtree) that
+    # are not yet cleared, oldest first.
+    private def uncleared_transactions(account : String) : Array(Transaction)
+      done = @store.cleared_ids(account).to_set
+      @store.transactions
+        .select { |t| !done.includes?(t.id) && t.postings.any? { |p| p.account == account } }
+        .sort_by { |t| {t.date, t.id} }
     end
 
     private def cmd_balance(r : Jargon::Result) : Nil
@@ -1161,6 +1286,13 @@ module Finfry
       credit_normal ? -cents : cents
     end
 
+    # A transaction's "size": the largest leg by absolute value. For a balanced
+    # entry that's the amount that moved (the spend/earn/transfer figure), so it
+    # is what `register --min/--max` filters on.
+    private def txn_magnitude(txn : Transaction) : Int64
+      txn.postings.max_of { |p| p.amount.abs }
+    end
+
     # A finfry command exposed to the AI: tool name, the dispatch subcommand it
     # maps to, whether it mutates (writes are deferred for approval), a
     # description, and the JSON Schema of its input.
@@ -1199,8 +1331,8 @@ module Finfry
     private def agent_tools_spec : Array(AgentTool)
       cadence = Recurrence.names.to_json
       [
-        AgentTool.new("register", "register", false, "List transactions (the register); optional filters: account (subtree), month (YYYY-MM), limit.",
-          JSON.parse(%({"type":"object","properties":{"account":{"type":"string"},"month":{"type":"string"},"limit":{"type":"integer"}}}))),
+        AgentTool.new("register", "register", false, "List transactions (the register). Filters: account (subtree), month (YYYY-MM), since/until (YYYY-MM-DD), min/max (largest leg amount), match (memo text), limit.",
+          JSON.parse(%({"type":"object","properties":{"account":{"type":"string"},"month":{"type":"string"},"since":{"type":"string"},"until":{"type":"string"},"min":{"type":"string"},"max":{"type":"string"},"match":{"type":"string"},"limit":{"type":"integer"}}}))),
         AgentTool.new("balance", "balance", false, "Show account balances, optionally limited to an account subtree (prefix).",
           JSON.parse(%({"type":"object","properties":{"prefix":{"type":"string"}}}))),
         AgentTool.new("income_statement", "report income", false, "Income statement for a month (YYYY-MM; default current).",
@@ -1213,6 +1345,8 @@ module Finfry
           JSON.parse(%({"type":"object","properties":{}}))),
         AgentTool.new("history", "history", false, "Recent change history (optional limit).",
           JSON.parse(%({"type":"object","properties":{"limit":{"type":"integer"}}}))),
+        AgentTool.new("reconcile", "reconcile status", false, "Reconciliation status for an account: cleared balance, ledger balance, uncleared transactions, and (with statement) whether it agrees.",
+          JSON.parse(%({"type":"object","properties":{"account":{"type":"string"},"statement":{"type":"string"}},"required":["account"]}))),
         AgentTool.new("spend", "spend", true, "Record an expense. account = the Expenses:* account; from = the asset/liability paid from (default #{DEFAULT_ASSET_ACCOUNT}).",
           JSON.parse(%({"type":"object","properties":{"amount":{"type":"string"},"account":{"type":"string"},"from":{"type":"string"},"memo":{"type":"string"},"date":{"type":"string"},"recurrence":{"type":"string","enum":#{cadence}}},"required":["amount","account"]}))),
         AgentTool.new("earn", "earn", true, "Record income. account = the Income:* account; to = the asset received into (default #{DEFAULT_ASSET_ACCOUNT}).",

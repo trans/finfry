@@ -262,6 +262,44 @@ module Finfry
       !removed.nil?
     end
 
+    # Reconciliation ----------------------------------------------------------
+
+    # Transaction ids marked cleared against `account`'s statement.
+    def cleared_ids(account : String) : Array(Int32)
+      @db.cleared[account]? || [] of Int32
+    end
+
+    def cleared?(account : String, id : Int32) : Bool
+      (@db.cleared[account]? || [] of Int32).includes?(id)
+    end
+
+    # Mark (or unmark) transactions as cleared against `account`. Reconciliation
+    # is bookkeeping metadata, not a ledger change, so it isn't journaled for
+    # undo. Returns the number of ids whose state actually changed.
+    def set_cleared(account : String, ids : Array(Int32), cleared : Bool) : Int32
+      list = (@db.cleared[account] ||= [] of Int32)
+      changed = 0
+      if cleared
+        ids.each { |id| (list << id) && (changed += 1) unless list.includes?(id) }
+      else
+        ids.each { |id| changed += 1 unless list.delete(id).nil? }
+      end
+      @db.cleared.delete(account) if list.empty?
+      save if changed > 0
+      changed
+    end
+
+    # Net of `account`'s own postings (exact match — a statement reconciles one
+    # account, not a subtree) across transactions cleared for it. A cleared id
+    # with no surviving transaction is ignored, so stale ids are harmless.
+    def cleared_balance(account : String) : Int64
+      ids = (@db.cleared[account]? || [] of Int32).to_set
+      @db.transactions.sum(0_i64) do |t|
+        next 0_i64 unless ids.includes?(t.id)
+        t.postings.sum(0_i64) { |p| p.account == account ? p.amount : 0_i64 }
+      end
+    end
+
     # Remove an account from the chart. Returns false if it wasn't declared.
     # (If postings still reference it, it stays "known" via use.)
     def undeclare_account(name : String) : Bool

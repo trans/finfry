@@ -264,6 +264,10 @@ module Finfry
     # card's apr/limit/due-day. Visible to the AI; secrets are a later feature.
     property account_meta : Hash(String, Hash(String, String)) = {} of String => Hash(String, String)
 
+    # Reconciliation: per-account set of transaction ids marked cleared against
+    # that account's statement (account => [transaction ids]).
+    property cleared : Hash(String, Array(Int32)) = {} of String => Array(Int32)
+
     # "strict" | "guard" | "off"
     property account_policy : String = "strict"
 

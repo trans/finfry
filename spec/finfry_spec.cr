@@ -633,6 +633,73 @@ def recurring_expense(id : Int32, date : String, desc : String, account : String
 end
 
 # A balanced expense posting pair paid from Assets:Checking.
+describe "Finfry::Store reconciliation" do
+  it "starts with nothing cleared" do
+    with_store do |store|
+      store.record("2026-06-01", "groceries", expense("Expenses:Food", 5000))
+      store.cleared_ids("Assets:Checking").should be_empty
+      store.cleared_balance("Assets:Checking").should eq(0_i64)
+    end
+  end
+
+  it "sums only the cleared transactions' own postings for the account" do
+    with_store do |store|
+      a = store.record("2026-06-01", "a", expense("Expenses:Food", 5000))
+      b = store.record("2026-06-05", "b", expense("Expenses:Food", 1200))
+      store.record("2026-06-10", "c", expense("Expenses:Food", 200))
+
+      store.set_cleared("Assets:Checking", [a.id, b.id], true).should eq(2)
+      # exact account, sign as stored: two debits leaving checking
+      store.cleared_balance("Assets:Checking").should eq(-6200_i64)
+      store.cleared?("Assets:Checking", a.id).should be_true
+      store.cleared?("Assets:Checking", b.id).should be_true
+    end
+  end
+
+  it "set_cleared is idempotent and reports only real changes" do
+    with_store do |store|
+      t = store.record("2026-06-01", "x", expense("Expenses:Food", 100))
+      store.set_cleared("Assets:Checking", [t.id], true).should eq(1)
+      store.set_cleared("Assets:Checking", [t.id], true).should eq(0)
+      store.set_cleared("Assets:Checking", [t.id], false).should eq(1)
+      store.set_cleared("Assets:Checking", [t.id], false).should eq(0)
+      store.cleared_ids("Assets:Checking").should be_empty
+    end
+  end
+
+  it "is per-account: clearing for one account doesn't clear another" do
+    with_store do |store|
+      t = store.record("2026-06-01", "x", expense("Expenses:Food", 100))
+      store.set_cleared("Assets:Checking", [t.id], true)
+      store.cleared_balance("Expenses:Food").should eq(0_i64)
+    end
+  end
+
+  it "ignores cleared ids whose transaction no longer exists" do
+    with_store do |store|
+      t = store.record("2026-06-01", "x", expense("Expenses:Food", 100))
+      store.set_cleared("Assets:Checking", [t.id], true)
+      store.delete_transaction(t.id)
+      store.cleared_balance("Assets:Checking").should eq(0_i64)
+    end
+  end
+
+  it "persists cleared state across reload" do
+    path = File.tempname("finfry_recon", ".json")
+    begin
+      id = nil
+      Finfry::Store.new(path).tap do |store|
+        t = store.record("2026-06-01", "x", expense("Expenses:Food", 100))
+        store.set_cleared("Assets:Checking", [t.id], true)
+        id = t.id
+      end
+      Finfry::Store.new(path).cleared_ids("Assets:Checking").should eq([id])
+    ensure
+      File.delete(path) if File.exists?(path)
+    end
+  end
+end
+
 def expense(account : String, cents : Int32) : Array(Finfry::Posting)
   [
     Finfry::Posting.new(account, cents.to_i64),

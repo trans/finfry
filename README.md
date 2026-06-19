@@ -123,6 +123,27 @@ Unstaged entries just stay pending for next time. Each posted occurrence is a
 normal [undoable](#undo--corrections) transaction (tagged with its cadence, so it
 shows in `report daily`).
 
+### Reconciliation
+
+Reconciling proves your ledger agrees with a bank or card statement. Each
+transaction is **cleared** or not *for a given account* — cleared means it has
+appeared on that account's statement (state is tracked per account, so checking
+and a credit card reconcile independently).
+
+```
+finfry reconcile Assets:Checking            # cleared balance, ledger balance, uncleared list
+finfry reconcile clear Assets:Checking 1 2  # mark transactions that hit the statement (or 'all')
+finfry reconcile Assets:Checking 2738.00    # check the cleared balance against the statement total
+```
+
+The status view shows the **cleared balance** (only cleared transactions), the
+full **ledger balance**, and every uncleared transaction touching the account.
+Give the statement's ending balance and finfry tells you whether you're
+reconciled or **off by** some amount — keep clearing (or `unclear`) until it
+matches. Clearing is bookkeeping metadata, not a ledger change, so it is not
+undoable and never alters balances; the AI can read reconciliation status but
+clearing stays a human, statement-in-hand task.
+
 ### Sign convention
 
 Amounts are signed cents internally. `Assets`/`Expenses` are debit-normal
@@ -152,8 +173,8 @@ echo "netflix 15.49 monthly" | finfry ai --yes
 How it works:
 
 - **Read tools** (`register`, `balance`, `report`, `balance-sheet`, `daily`,
-  `accounts`, `history`, `recurring`, `due`) run immediately so the AI can answer
-  and gather context.
+  `accounts`, `history`, `recurring`, `due`, `reconcile`) run immediately so the
+  AI can answer and gather context.
 - **Write tools** (`spend`, `earn`, `transfer`, `budget`, `accounts add/rename`,
   `recurring add/interest/off`, `due ok/skip/edit/post`) don't take effect right
   away — they're collected into a **plan** that finfry
@@ -231,6 +252,8 @@ finfry add -m "market run" \
 
 # Reports
 finfry register [-a Expenses:Food] [-m 2026-06] [-n 10]   # transactions (the ledger register)
+finfry register -s 2026-06-01 -u 2026-06-30 --min 100  # filter by date range / amount...
+finfry register -q rent                                # ...or memo text (--match)
 finfry balance [Assets]                                # account balances (quick lookup)
 finfry report                                          # income statement (default)
 finfry report income [-m 2026-06]                      # income statement
@@ -244,6 +267,12 @@ finfry undo 4                                          # reverse an older change
 finfry redo                                            # bring back the change undo just removed
 finfry init [dir]                                      # create a per-directory book
 finfry path                                            # print the active ledger file
+
+# Reconcile an account against a bank/card statement
+finfry reconcile Assets:Checking                       # cleared vs ledger balance + uncleared list
+finfry reconcile Assets:Checking 2738.00               # check against a statement balance
+finfry reconcile clear Assets:Checking 1 2 5           # mark transactions cleared (or 'all')
+finfry reconcile unclear Assets:Checking 5             # undo a clear (or 'all')
 
 # Budgets (per account, rolled up over the subtree)
 finfry budget set Expenses:Food 400
