@@ -157,24 +157,32 @@ module Finfry
           prefix: {type: string, description: "Limit to this account subtree"}
         YAML
 
-      cli.subcommand "report", yaml: <<-YAML
+      report = Jargon.new("report")
+      report.subcommand "income", yaml: <<-YAML
         type: object
         description: Income statement for a month
         properties:
           month: {type: string, short: m, description: "Month as YYYY-MM (default current)"}
         YAML
-
-      cli.subcommand "balancesheet", yaml: <<-YAML
+      report.subcommand "balance-sheet", yaml: <<-YAML
         type: object
         description: Balance sheet (Assets / Liabilities / Equity) with an integrity check
         properties:
           date: {type: string, short: d, description: "As of date YYYY-MM-DD (default today)"}
         YAML
-
-      cli.subcommand "daily", yaml: <<-YAML
+      report.subcommand "daily", yaml: <<-YAML
         type: object
         description: Per-day cost of recurring items
         YAML
+      report.subcommand "balance", yaml: <<-YAML
+        type: object
+        description: Show account balances
+        positional: [prefix]
+        properties:
+          prefix: {type: string, description: "Limit to this account subtree"}
+        YAML
+      report.default_subcommand("income")
+      cli.subcommand "report", report
 
       accounts = Jargon.new("accounts")
       accounts.subcommand "list", yaml: <<-YAML
@@ -297,31 +305,32 @@ module Finfry
 
     private def dispatch(result : Jargon::Result) : Nil
       case result.subcommand
-      when "ai"              then cmd_ai(result)
-      when "spend"           then cmd_spend(result)
-      when "earn"            then cmd_earn(result)
-      when "transfer"        then cmd_transfer(result)
-      when "add"             then cmd_add(result)
-      when "list"            then cmd_list(result)
-      when "balance"         then cmd_balance(result)
-      when "report"          then cmd_report(result)
-      when "balancesheet"    then cmd_balancesheet(result)
-      when "daily"           then cmd_daily(result)
-      when "accounts list"   then cmd_accounts_list(result)
-      when "accounts add"    then cmd_accounts_add(result)
-      when "accounts rm"     then cmd_accounts_rm(result)
-      when "accounts rename" then cmd_accounts_rename(result)
-      when "accounts policy" then cmd_accounts_policy(result)
-      when "undo"            then cmd_undo(result)
-      when "redo"            then cmd_redo(result)
-      when "history"         then cmd_history(result)
-      when "init"            then cmd_init(result)
-      when "path"            then cmd_path(result)
-      when "mcp"             then cmd_mcp(result)
-      when "delete"          then cmd_delete(result)
-      when "budget set"      then cmd_budget_set(result)
-      when "budget list"     then cmd_budget_list(result)
-      when "budget rm"       then cmd_budget_rm(result)
+      when "ai"                   then cmd_ai(result)
+      when "spend"                then cmd_spend(result)
+      when "earn"                 then cmd_earn(result)
+      when "transfer"             then cmd_transfer(result)
+      when "add"                  then cmd_add(result)
+      when "list"                 then cmd_list(result)
+      when "balance"              then cmd_balance(result)
+      when "report income"        then cmd_report(result)
+      when "report balance-sheet" then cmd_balancesheet(result)
+      when "report daily"         then cmd_daily(result)
+      when "report balance"       then cmd_balance(result)
+      when "accounts list"        then cmd_accounts_list(result)
+      when "accounts add"         then cmd_accounts_add(result)
+      when "accounts rm"          then cmd_accounts_rm(result)
+      when "accounts rename"      then cmd_accounts_rename(result)
+      when "accounts policy"      then cmd_accounts_policy(result)
+      when "undo"                 then cmd_undo(result)
+      when "redo"                 then cmd_redo(result)
+      when "history"              then cmd_history(result)
+      when "init"                 then cmd_init(result)
+      when "path"                 then cmd_path(result)
+      when "mcp"                  then cmd_mcp(result)
+      when "delete"               then cmd_delete(result)
+      when "budget set"           then cmd_budget_set(result)
+      when "budget list"          then cmd_budget_list(result)
+      when "budget rm"            then cmd_budget_rm(result)
       else
         puts cli.help
       end
@@ -877,11 +886,11 @@ module Finfry
           JSON.parse(%({"type":"object","properties":{"account":{"type":"string"},"month":{"type":"string"},"limit":{"type":"integer"}}}))),
         AgentTool.new("balance", "balance", false, "Show account balances, optionally limited to an account subtree (prefix).",
           JSON.parse(%({"type":"object","properties":{"prefix":{"type":"string"}}}))),
-        AgentTool.new("report", "report", false, "Income statement for a month (YYYY-MM; default current).",
+        AgentTool.new("income_statement", "report income", false, "Income statement for a month (YYYY-MM; default current).",
           JSON.parse(%({"type":"object","properties":{"month":{"type":"string"}}}))),
-        AgentTool.new("balancesheet", "balancesheet", false, "Balance sheet: Assets / Liabilities / Equity with subtotals and the accounting-equation integrity check.",
+        AgentTool.new("balance_sheet", "report balance-sheet", false, "Balance sheet: Assets / Liabilities / Equity with subtotals and the accounting-equation integrity check.",
           JSON.parse(%({"type":"object","properties":{"date":{"type":"string"}}}))),
-        AgentTool.new("daily", "daily", false, "Per-day amortized cost of recurring items.",
+        AgentTool.new("daily", "report daily", false, "Per-day amortized cost of recurring items.",
           JSON.parse(%({"type":"object","properties":{}}))),
         AgentTool.new("accounts", "accounts list", false, "List the known accounts.",
           JSON.parse(%({"type":"object","properties":{}}))),

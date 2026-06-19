@@ -177,10 +177,12 @@ finfry add -m "market run" \
 
 # Reports
 finfry list [-a Expenses:Food] [-m 2026-06] [-n 10]   # transactions
-finfry balance [Assets]                                # account balances
-finfry report [-m 2026-06]                             # income statement
-finfry balancesheet [-d 2026-06-30]                    # balance sheet + integrity check
-finfry daily                                           # per-day cost of recurring items
+finfry balance [Assets]                                # account balances (quick lookup)
+finfry report                                          # income statement (default)
+finfry report income [-m 2026-06]                      # income statement
+finfry report balance-sheet [-d 2026-06-30]            # balance sheet + integrity check
+finfry report daily                                    # per-day cost of recurring items
+finfry report balance [Assets]                         # account balances (also under report)
 finfry accounts                                        # accounts in use
 finfry history [-n 10]                                 # change history
 finfry undo                                            # remove the most recent change
@@ -202,7 +204,7 @@ Run `finfry --help`, or `finfry <command> --help`, for full options.
 
 ### Recurring items & daily cost
 
-Tag a transaction with `-r <cadence>` to mark it recurring. `finfry daily` then
+Tag a transaction with `-r <cadence>` to mark it recurring. `finfry report daily` then
 shows what each commitment costs **per day**, derived from its cadence (e.g. a
 $15.49/month subscription is `15.49 ÷ (365.25/12) ≈ $0.51/day`), plus a total
 burn rate projected to monthly and yearly equivalents:
