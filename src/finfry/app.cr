@@ -221,6 +221,33 @@ module Finfry
         properties:
           mode: {type: string, enum: [strict, guard, off]}
         YAML
+      accounts.subcommand "set", yaml: <<-YAML
+        type: object
+        description: Set a metadata key on an account (e.g. apr, limit, due-day, bank)
+        positional: [account, key, value]
+        properties:
+          account: {type: string}
+          key: {type: string}
+          value: {type: string}
+        required: [account, key, value]
+        YAML
+      accounts.subcommand "unset", yaml: <<-YAML
+        type: object
+        description: Remove a metadata key from an account
+        positional: [account, key]
+        properties:
+          account: {type: string}
+          key: {type: string}
+        required: [account, key]
+        YAML
+      accounts.subcommand "info", yaml: <<-YAML
+        type: object
+        description: Show an account's balance and metadata
+        positional: [account]
+        properties:
+          account: {type: string}
+        required: [account]
+        YAML
       accounts.default_subcommand("list")
       cli.subcommand "accounts", accounts
 
@@ -321,6 +348,9 @@ module Finfry
       when "accounts rm"          then cmd_accounts_rm(result)
       when "accounts rename"      then cmd_accounts_rename(result)
       when "accounts policy"      then cmd_accounts_policy(result)
+      when "accounts set"         then cmd_accounts_set(result)
+      when "accounts unset"       then cmd_accounts_unset(result)
+      when "accounts info"        then cmd_accounts_info(result)
       when "undo"                 then cmd_undo(result)
       when "redo"                 then cmd_redo(result)
       when "history"              then cmd_history(result)
@@ -734,8 +764,43 @@ module Finfry
       end
       used = @store.used_accounts.to_set
       known.each do |a|
-        puts used.includes?(a) ? a : "#{a}  (unused)"
+        marker = used.includes?(a) ? "" : "  (unused)"
+        puts "#{a}#{marker}#{meta_suffix(a)}"
       end
+    end
+
+    private def cmd_accounts_set(r : Jargon::Result) : Nil
+      account = r["account"].as_s
+      key = r["key"].as_s
+      value = r["value"].as_s
+      @store.set_account_meta(account, key, value)
+      puts "#{account}: #{key} = #{value}"
+    end
+
+    private def cmd_accounts_unset(r : Jargon::Result) : Nil
+      account = r["account"].as_s
+      key = r["key"].as_s
+      if @store.unset_account_meta(account, key)
+        puts "Removed #{key} from #{account}"
+      else
+        raise Error.new("#{account} has no metadata key '#{key}'")
+      end
+    end
+
+    private def cmd_accounts_info(r : Jargon::Result) : Nil
+      account = r["account"].as_s
+      balance = @store.balances[account]? || 0_i64
+      puts account
+      puts "  balance: #{Money.format(display_cents(account, balance))}"
+      meta = @store.account_meta(account)
+      meta.to_a.sort_by { |(k, _)| k }.each { |(k, v)| puts "  #{k}: #{v}" }
+    end
+
+    # " {key=value, ...}" for an account with metadata, else "".
+    private def meta_suffix(account : String) : String
+      meta = @store.account_meta(account)
+      return "" if meta.empty?
+      "  {#{meta.to_a.sort_by { |(k, _)| k }.map { |(k, v)| "#{k}=#{v}" }.join(", ")}}"
     end
 
     private def cmd_accounts_add(r : Jargon::Result) : Nil
@@ -910,12 +975,14 @@ module Finfry
           JSON.parse(%({"type":"object","properties":{"names":{"type":"array","items":{"type":"string"}}},"required":["names"]}))),
         AgentTool.new("accounts_rename", "accounts rename", true, "Rename an account everywhere (merges into the target if it exists).",
           JSON.parse(%({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}))),
+        AgentTool.new("set_account_metadata", "accounts set", true, "Record a metadata key/value on an account (e.g. apr, limit, due-day, bank). Visible in the account chart.",
+          JSON.parse(%({"type":"object","properties":{"account":{"type":"string"},"key":{"type":"string"},"value":{"type":"string"}},"required":["account","key","value"]}))),
       ]
     end
 
     private def agent_system_prompt : String
       accounts = @store.known_accounts
-      account_list = accounts.empty? ? "(none yet)" : accounts.join("\n")
+      account_list = accounts.empty? ? "(none yet)" : accounts.map { |a| "#{a}#{meta_suffix(a)}" }.join("\n")
       <<-PROMPT
       You are finfry's assistant, managing a personal double-entry ledger through tools.
 

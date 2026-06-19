@@ -221,6 +221,10 @@ module Finfry
     # ledgers loaded via from_json aren't reseeded.
     property accounts : Array(String) = [] of String
 
+    # Free-form per-account metadata (account => key => value), e.g. a credit
+    # card's apr/limit/due-day. Visible to the AI; secrets are a later feature.
+    property account_meta : Hash(String, Hash(String, String)) = {} of String => Hash(String, String)
+
     # "strict" | "guard" | "off"
     property account_policy : String = "strict"
 

@@ -45,8 +45,18 @@ finfry accounts                         # list known accounts (declared + used)
 finfry accounts add Expenses:Food:Coffee Assets:Brokerage
 finfry accounts rename Expenses:Foood Expenses:Food   # rewrites postings; merges if target exists
 finfry accounts rm Assets:Brokerage     # remove from the chart
+finfry accounts set Liabilities:CreditCards:Chase apr 19.99   # account metadata (apr, limit, due-day, …)
+finfry accounts info Liabilities:CreditCards:Chase           # balance + metadata
+finfry accounts unset Liabilities:CreditCards:Chase apr
 finfry accounts policy guard            # strict | guard | off (no arg prints current)
 ```
+
+Accounts can carry free-form **metadata** (`accounts set <account> <key> <value>`)
+— e.g. a credit card's `apr`, `limit`, `due-day`, `bank`. It shows in
+`accounts list`/`info`, is carried across `rename`, and is visible to the AI so it
+can reason about rates and terms. (Secret metadata — account numbers etc. kept
+out of the AI's view — is a planned follow-up; for now treat metadata as
+non-secret.)
 
 The AI path respects the policy too: a proposal that introduces a new account
 shows it as `New account: …`, and your confirmation is the deliberate "yes" that

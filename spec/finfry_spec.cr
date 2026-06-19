@@ -240,6 +240,28 @@ describe Finfry::Store do
     end
   end
 
+  it "sets, reads, and removes account metadata" do
+    with_store do |store|
+      store.set_account_meta("Liabilities:CreditCards:Chase", "apr", "19.99")
+      store.set_account_meta("Liabilities:CreditCards:Chase", "limit", "5000")
+      store.account_meta("Liabilities:CreditCards:Chase").should eq({"apr" => "19.99", "limit" => "5000"})
+
+      store.unset_account_meta("Liabilities:CreditCards:Chase", "limit").should be_true
+      store.account_meta("Liabilities:CreditCards:Chase").should eq({"apr" => "19.99"})
+      store.unset_account_meta("Liabilities:CreditCards:Chase", "limit").should be_false
+      store.account_meta("Nope").should be_empty
+    end
+  end
+
+  it "carries metadata across a rename" do
+    with_store do |store|
+      store.set_account_meta("Liabilities:CreditCards:Chase", "apr", "19.99")
+      store.rename_account("Liabilities:CreditCards:Chase", "Liabilities:CreditCards:Sapphire")
+      store.account_meta("Liabilities:CreditCards:Sapphire").should eq({"apr" => "19.99"})
+      store.account_meta("Liabilities:CreditCards:Chase").should be_empty
+    end
+  end
+
   it "stores and removes budgets" do
     with_store do |store|
       store.set_budget("Expenses:Food", 40000_i64)

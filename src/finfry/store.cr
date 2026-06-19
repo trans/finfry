@@ -166,6 +166,27 @@ module Finfry
       true
     end
 
+    # --- account metadata -----------------------------------------------
+
+    def account_meta(account : String) : Hash(String, String)
+      @db.account_meta[account]? || {} of String => String
+    end
+
+    def set_account_meta(account : String, key : String, value : String) : Nil
+      (@db.account_meta[account] ||= {} of String => String)[key] = value
+      save
+    end
+
+    # Remove a metadata key. Returns false if it wasn't set.
+    def unset_account_meta(account : String, key : String) : Bool
+      meta = @db.account_meta[account]?
+      return false unless meta
+      removed = meta.delete(key)
+      @db.account_meta.delete(account) if meta.empty?
+      save unless removed.nil?
+      !removed.nil?
+    end
+
     # Remove an account from the chart. Returns false if it wasn't declared.
     # (If postings still reference it, it stays "known" via use.)
     def undeclare_account(name : String) : Bool
@@ -195,6 +216,10 @@ module Finfry
       end
       if limit = @db.budgets.delete(from)
         @db.budgets[to] = limit
+      end
+      if meta = @db.account_meta.delete(from)
+        target = @db.account_meta[to] ||= {} of String => String
+        meta.each { |key, value| target[key] = value unless target.has_key?(key) }
       end
 
       save
