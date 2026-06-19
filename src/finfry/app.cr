@@ -1057,7 +1057,7 @@ module Finfry
     end
 
     private def due_targets(r : Jargon::Result) : Array(DueEntry)
-      tokens = r["ids"].as_a.map(&.as_s)
+      tokens = r["ids"].as_a.map(&.to_s) # tolerate strings (CLI) or numbers (AI)
       return @store.due_entries if tokens.includes?("all")
       ids = tokens.compact_map(&.to_i?)
       @store.due_entries.select { |e| ids.includes?(e.id) }
@@ -1229,6 +1229,24 @@ module Finfry
           JSON.parse(%({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}))),
         AgentTool.new("set_account_metadata", "accounts set", true, "Record a metadata key/value on an account (e.g. apr, limit, due-day, bank). Visible in the account chart.",
           JSON.parse(%({"type":"object","properties":{"account":{"type":"string"},"key":{"type":"string"},"value":{"type":"string"}},"required":["account","key","value"]}))),
+        AgentTool.new("recurring", "recurring list", false, "List recurring rules.",
+          JSON.parse(%({"type":"object","properties":{}}))),
+        AgentTool.new("recurring_add", "recurring add", true, "Define a recurring rule. kind expense/income/transfer; every is the cadence; start optional (back-date to catch up).",
+          JSON.parse(%({"type":"object","properties":{"amount":{"type":"string"},"account":{"type":"string"},"counter":{"type":"string"},"kind":{"type":"string","enum":["expense","income","transfer"]},"every":{"type":"string","enum":#{cadence}},"start":{"type":"string"},"memo":{"type":"string"}},"required":["amount","account","every"]}))),
+        AgentTool.new("recurring_interest", "recurring interest", true, "Define a computed credit-card interest rule (amount = card APR x balance owed each cycle).",
+          JSON.parse(%({"type":"object","properties":{"card":{"type":"string"},"account":{"type":"string"},"every":{"type":"string","enum":#{cadence}},"apr":{"type":"string"},"start":{"type":"string"},"memo":{"type":"string"}},"required":["card"]}))),
+        AgentTool.new("recurring_off", "recurring off", true, "Turn off a recurring rule (stops generating new occurrences).",
+          JSON.parse(%({"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}))),
+        AgentTool.new("due", "due list", false, "Show the due queue (occurrences awaiting review). Listing also materializes newly-due ones.",
+          JSON.parse(%({"type":"object","properties":{}}))),
+        AgentTool.new("due_ok", "due ok", true, "Stage due entries to post (array of ids, or [\"all\"]).",
+          JSON.parse(%({"type":"object","properties":{"ids":{"type":"array","items":{"type":"string"}}},"required":["ids"]}))),
+        AgentTool.new("due_skip", "due skip", true, "Stage due entries to drop (array of ids, or [\"all\"]).",
+          JSON.parse(%({"type":"object","properties":{"ids":{"type":"array","items":{"type":"string"}}},"required":["ids"]}))),
+        AgentTool.new("due_edit", "due edit", true, "Adjust a due entry before posting (marks it ok).",
+          JSON.parse(%({"type":"object","properties":{"id":{"type":"integer"},"amount":{"type":"string"},"date":{"type":"string"},"memo":{"type":"string"}},"required":["id"]}))),
+        AgentTool.new("due_post", "due post", true, "Apply staged decisions: post the ok'd entries, drop the skipped.",
+          JSON.parse(%({"type":"object","properties":{}}))),
       ]
     end
 
@@ -1257,6 +1275,9 @@ module Finfry
         the plan, so express exactly what should happen.
       - If a change needs an account that isn't known yet, call accounts_add for it
         first, then the spend/earn that uses it.
+      - Recurring bills: `recurring`/`due` show rules and what's due. To record due
+        items, stage them (due_ok / due_skip, optionally due_edit a variable
+        amount) then due_post — only ok'd entries post, skipped ones drop.
       - Finish with a brief plain-language summary of what you found or queued.
       PROMPT
     end

@@ -151,10 +151,12 @@ echo "netflix 15.49 monthly" | finfry ai --yes
 
 How it works:
 
-- **Read tools** (`list`, `balance`, `report`, `daily`, `accounts`, `history`)
-  run immediately so the AI can answer and gather context.
-- **Write tools** (`spend`, `earn`, `transfer`, `budget`, `accounts add/rename`)
-  don't take effect right away — they're collected into a **plan** that finfry
+- **Read tools** (`list`, `balance`, `report`, `balance-sheet`, `daily`,
+  `accounts`, `history`, `recurring`, `due`) run immediately so the AI can answer
+  and gather context.
+- **Write tools** (`spend`, `earn`, `transfer`, `budget`, `accounts add/rename`,
+  `recurring add/interest/off`, `due ok/skip/edit/post`) don't take effect right
+  away — they're collected into a **plan** that finfry
   shows you and applies only once you approve it (`--yes` skips the prompt).
   The whole plan applies as one [undoable](#undo--corrections) change.
 - It reuses your existing accounts for consistency and resolves relative dates.
