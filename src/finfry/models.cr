@@ -207,6 +207,25 @@ module Finfry
     end
   end
 
+  # A recurring commitment: a template transaction (postings + description) that
+  # recurs on a cadence. `next_date` is the cursor — the next occurrence not yet
+  # generated into the due queue; it advances as occurrences are generated, so
+  # nothing is ever produced twice. A class (not struct) because it's mutated in
+  # place (cursor advances, turned off).
+  class RecurringRule
+    include JSON::Serializable
+
+    property id : Int32
+    property description : String
+    property cadence : String          # "monthly", etc.
+    property next_date : String        # cursor: next occurrence to generate
+    property postings : Array(Posting) # template; per-occurrence amount editable later
+    property active : Bool = true
+
+    def initialize(@id, @description, @cadence, @next_date, @postings, @active = true)
+    end
+  end
+
   # The full persisted state: an id counter, all transactions, per-account
   # monthly budget limits (cents), the declared chart of accounts, the
   # unknown-account policy, and the undo journal.
@@ -227,6 +246,10 @@ module Finfry
 
     # "strict" | "guard" | "off"
     property account_policy : String = "strict"
+
+    # Recurring rules + their id counter.
+    property recurring : Array(RecurringRule) = [] of RecurringRule
+    property next_recurring_id : Int32 = 1
 
     # Undo journal — one entry per mutating operation, newest last.
     property changesets : Array(Changeset) = [] of Changeset

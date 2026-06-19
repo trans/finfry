@@ -316,6 +316,46 @@ describe Finfry::Recurrence do
     Finfry::Recurrence.valid?("fortnightly").should be_false
     expect_raises(Finfry::Error) { Finfry::Recurrence.days("fortnightly") }
   end
+
+  describe ".advance" do
+    it "steps by cadence" do
+      Finfry::Recurrence.advance("2026-06-19", "weekly").should eq("2026-06-26")
+      Finfry::Recurrence.advance("2026-06-19", "monthly").should eq("2026-07-19")
+      Finfry::Recurrence.advance("2026-06-19", "yearly").should eq("2027-06-19")
+    end
+
+    it "clamps month-end overflow" do
+      Finfry::Recurrence.advance("2026-01-31", "monthly").should eq("2026-02-28")
+    end
+  end
+
+  describe ".occurrences" do
+    it "lists occurrences up to and including the cutoff (catch-up)" do
+      Finfry::Recurrence.occurrences("2026-04-01", "monthly", "2026-06-19")
+        .should eq(["2026-04-01", "2026-05-01", "2026-06-01"])
+    end
+
+    it "is empty when the first occurrence is in the future" do
+      Finfry::Recurrence.occurrences("2026-07-01", "monthly", "2026-06-19").should be_empty
+    end
+  end
+end
+
+describe Finfry::Store do
+  it "adds and turns off recurring rules" do
+    with_store do |store|
+      rule = store.add_recurring_rule("Netflix", "monthly", "2026-06-01", expense("Expenses:Subs:Netflix", 1549))
+      rule.id.should eq(1)
+      store.add_recurring_rule("Rent", "monthly", "2026-06-01", expense("Expenses:Housing", 120000)).id.should eq(2)
+      store.recurring_rules.size.should eq(2)
+
+      store.deactivate_rule(1).should be_true
+      store.recurring_rules.find { |r| r.id == 1 }.not_nil!.active.should be_false
+      store.deactivate_rule(99).should be_false
+
+      Finfry::Store.new(store.path).recurring_rules.size.should eq(2) # persisted
+    end
+  end
 end
 
 describe "Finfry.recurring_items" do

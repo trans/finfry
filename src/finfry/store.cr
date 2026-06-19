@@ -166,6 +166,28 @@ module Finfry
       true
     end
 
+    # --- recurring rules ------------------------------------------------
+
+    def recurring_rules : Array(RecurringRule)
+      @db.recurring
+    end
+
+    def add_recurring_rule(description : String, cadence : String, start_date : String, postings : Array(Posting)) : RecurringRule
+      rule = RecurringRule.new(@db.next_recurring_id, description, cadence, start_date, postings)
+      @db.next_recurring_id += 1
+      @db.recurring << rule
+      save
+      rule
+    end
+
+    def deactivate_rule(id : Int32) : Bool
+      rule = @db.recurring.find { |r| r.id == id }
+      return false unless rule
+      rule.active = false
+      save
+      true
+    end
+
     # --- account metadata -----------------------------------------------
 
     def account_meta(account : String) : Hash(String, String)

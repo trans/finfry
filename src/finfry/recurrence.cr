@@ -36,6 +36,35 @@ module Finfry
     def self.per_day(cents : Int64, name : String) : Float64
       cents / days(name)
     end
+
+    # The date one cadence after `date` (ISO "YYYY-MM-DD"). Month/year steps clamp
+    # to valid days (Jan 31 + monthly => Feb 28/29).
+    def self.advance(date : String, cadence : String) : String
+      t = Time.parse(date, "%Y-%m-%d", Time::Location::UTC)
+      shifted =
+        case cadence
+        when "daily"     then t.shift(days: 1)
+        when "weekly"    then t.shift(days: 7)
+        when "biweekly"  then t.shift(days: 14)
+        when "monthly"   then t.shift(months: 1)
+        when "quarterly" then t.shift(months: 3)
+        when "yearly"    then t.shift(years: 1)
+        else                  raise Error.new("unknown recurrence #{cadence.inspect} (one of: #{names.join(", ")})")
+        end
+      shifted.to_s("%Y-%m-%d")
+    end
+
+    # Occurrence dates from `from` (inclusive) stepping by cadence up to and
+    # including `through`. Used to catch up the due queue.
+    def self.occurrences(from : String, cadence : String, through : String) : Array(String)
+      dates = [] of String
+      cursor = from
+      while cursor <= through
+        dates << cursor
+        cursor = advance(cursor, cadence)
+      end
+      dates
+    end
   end
 
   # One recurring commitment, reduced to its current per-day cost.

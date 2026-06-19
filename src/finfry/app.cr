@@ -331,6 +331,36 @@ module Finfry
         YAML
       cli.subcommand "budget", budget
 
+      recurring = Jargon.new("recurring")
+      recurring.subcommand "add", yaml: <<-YAML
+        type: object
+        description: Define a recurring rule (generates due entries to approve)
+        positional: [amount, account]
+        properties:
+          amount: {type: string, description: "Amount per occurrence"}
+          account: {type: string, description: "Expenses:* (spend), Income:* (income), or the destination (transfer)"}
+          counter: {type: string, short: c, description: "The other account: paid-from / received-into / transfer source (default #{DEFAULT_ASSET_ACCOUNT})"}
+          kind: {type: string, enum: [expense, income, transfer], description: "Default expense"}
+          every: {type: string, short: e, enum: [#{Recurrence.names.join(", ")}], description: "Cadence"}
+          start: {type: string, short: s, description: "First occurrence date YYYY-MM-DD (default today)"}
+          description: {type: string, short: m, description: "Note", default: ""}
+        required: [amount, account, every]
+        YAML
+      recurring.subcommand "list", yaml: <<-YAML
+        type: object
+        description: List recurring rules
+        YAML
+      recurring.subcommand "off", yaml: <<-YAML
+        type: object
+        description: Turn off a recurring rule (stops generating new occurrences)
+        positional: [id]
+        properties:
+          id: {type: integer, description: "Rule id (see 'recurring list')"}
+        required: [id]
+        YAML
+      recurring.default_subcommand("list")
+      cli.subcommand "recurring", recurring
+
       cli
     end
 
@@ -364,6 +394,9 @@ module Finfry
       when "path"                 then cmd_path(result)
       when "mcp"                  then cmd_mcp(result)
       when "delete"               then cmd_delete(result)
+      when "recurring add"        then cmd_recurring_add(result)
+      when "recurring list"       then cmd_recurring_list(result)
+      when "recurring off"        then cmd_recurring_off(result)
       when "budget set"           then cmd_budget_set(result)
       when "budget list"          then cmd_budget_list(result)
       when "budget rm"            then cmd_budget_rm(result)
@@ -852,6 +885,53 @@ module Finfry
     end
 
     # --- budgets ---------------------------------------------------------
+
+    private def cmd_recurring_add(r : Jargon::Result) : Nil
+      amount = Money.parse(r["amount"].as_s)
+      kind = r["kind"]?.try(&.as_s) || "expense"
+      account = r["account"].as_s
+      counter = r["counter"]?.try(&.as_s) || DEFAULT_ASSET_ACCOUNT
+      cadence = r["every"].as_s
+      start = r["start"]?.try(&.as_s) || today
+      validate_date!(start)
+
+      postings = Finfry.postings_for(kind, amount, account, counter)
+      enforce_account_policy!(postings) # catch typo'd accounts when the rule is defined
+      rule = @store.add_recurring_rule(desc_of(r), cadence, start, postings)
+      puts "Added recurring ##{rule.id}: #{rule_label(rule)} every #{cadence}, next #{start}"
+    end
+
+    private def cmd_recurring_list(r : Jargon::Result) : Nil
+      rules = @store.recurring_rules
+      if rules.empty?
+        puts "No recurring rules. Add one with 'finfry recurring add'."
+        return
+      end
+      rules.each do |rule|
+        if rule.active
+          due = Recurrence.occurrences(rule.next_date, rule.cadence, today).size
+          tail = due > 0 ? "  (#{due} due)" : ""
+        else
+          tail = "  (off)"
+        end
+        puts "##{rule.id}  %-9s  next %s  %s%s" % {rule.cadence, rule.next_date, rule_label(rule), tail}
+      end
+    end
+
+    private def cmd_recurring_off(r : Jargon::Result) : Nil
+      id = r["id"].as_i
+      if @store.deactivate_rule(id)
+        puts "Recurring ##{id} turned off"
+      else
+        raise Error.new("no recurring rule ##{id}")
+      end
+    end
+
+    private def rule_label(rule : RecurringRule) : String
+      primary = rule.postings.first
+      base = rule.description.empty? ? rule.postings.map(&.account).join(" / ") : rule.description
+      "#{base} (#{Money.format(primary.amount.abs)})"
+    end
 
     private def cmd_budget_set(r : Jargon::Result) : Nil
       account = r["account"].as_s
