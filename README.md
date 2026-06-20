@@ -132,9 +132,13 @@ and a credit card reconcile independently).
 
 ```
 finfry reconcile Assets:Checking            # cleared balance, ledger balance, uncleared list
-finfry reconcile clear Assets:Checking 1 2  # mark transactions that hit the statement (or 'all')
+finfry reconcile Assets:Checking clear 1 2  # mark transactions that hit the statement (or 'all')
 finfry reconcile Assets:Checking 2738.00    # check the cleared balance against the statement total
 ```
+
+The account always comes first — every form is `reconcile <account> …` — and the
+second word is either an action (`clear`/`unclear`, with ids) or a statement
+balance to check against.
 
 The status view shows the **cleared balance** (only cleared transactions), the
 full **ledger balance**, and every uncleared transaction touching the account.
@@ -268,11 +272,11 @@ finfry redo                                            # bring back the change u
 finfry init [dir]                                      # create a per-directory book
 finfry path                                            # print the active ledger file
 
-# Reconcile an account against a bank/card statement
+# Reconcile an account against a bank/card statement (account always comes first)
 finfry reconcile Assets:Checking                       # cleared vs ledger balance + uncleared list
 finfry reconcile Assets:Checking 2738.00               # check against a statement balance
-finfry reconcile clear Assets:Checking 1 2 5           # mark transactions cleared (or 'all')
-finfry reconcile unclear Assets:Checking 5             # undo a clear (or 'all')
+finfry reconcile Assets:Checking clear 1 2 5           # mark transactions cleared (or 'all')
+finfry reconcile Assets:Checking unclear 5             # undo a clear (or 'all')
 
 # Budgets (per account, rolled up over the subtree)
 finfry budget set Expenses:Food 400

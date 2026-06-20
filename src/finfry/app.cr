@@ -426,36 +426,20 @@ module Finfry
       due.default_subcommand("list")
       cli.subcommand "due", due
 
-      reconcile = Jargon.new("reconcile")
-      reconcile.subcommand "status", yaml: <<-YAML
+      # Account-first by design: the account is common to every form, so it
+      # always comes right after `reconcile`. The second word is either an
+      # action ("clear"/"unclear", followed by ids) or — for the status view —
+      # an optional statement balance to check against.
+      cli.subcommand "reconcile", yaml: <<-YAML
         type: object
-        description: Reconciliation status for an account (vs an optional statement balance)
-        positional: [account, statement]
+        description: Reconcile an account — status, or clear/unclear transactions
+        positional: [account, op, ids]
         properties:
           account: {type: string, description: "The account to reconcile"}
-          statement: {type: string, short: s, description: "Statement ending balance to check against"}
+          op: {type: string, description: "'clear'/'unclear' (with ids), or a statement balance to check against"}
+          ids: {type: array, description: "Transaction ids to clear/unclear, or 'all'"}
         required: [account]
         YAML
-      reconcile.subcommand "clear", yaml: <<-YAML
-        type: object
-        description: Mark transactions cleared for an account (ids, or 'all')
-        positional: [account, ids]
-        properties:
-          account: {type: string}
-          ids: {type: array, description: "Transaction ids, or 'all'"}
-        required: [account, ids]
-        YAML
-      reconcile.subcommand "unclear", yaml: <<-YAML
-        type: object
-        description: Unmark transactions for an account (ids, or 'all')
-        positional: [account, ids]
-        properties:
-          account: {type: string}
-          ids: {type: array, description: "Transaction ids, or 'all'"}
-        required: [account, ids]
-        YAML
-      reconcile.default_subcommand("status")
-      cli.subcommand "reconcile", reconcile
 
       cli
     end
@@ -500,9 +484,7 @@ module Finfry
       when "due reset"            then cmd_due_stage(result, "pending")
       when "due edit"             then cmd_due_edit(result)
       when "due post"             then cmd_due_post(result)
-      when "reconcile status"     then cmd_reconcile_status(result)
-      when "reconcile clear"      then cmd_reconcile_mark(result, true)
-      when "reconcile unclear"    then cmd_reconcile_mark(result, false)
+      when "reconcile"            then cmd_reconcile(result)
       when "budget set"           then cmd_budget_set(result)
       when "budget list"          then cmd_budget_list(result)
       when "budget rm"            then cmd_budget_rm(result)
@@ -712,11 +694,25 @@ module Finfry
       end
     end
 
+    # Route the account-first reconcile command: `reconcile <account>` (status),
+    # `reconcile <account> <balance>` (status vs statement), and
+    # `reconcile <account> clear|unclear <ids|all>`. The AI passes the statement
+    # as a named `statement` property rather than positionally.
+    private def cmd_reconcile(r : Jargon::Result) : Nil
+      account = r["account"].as_s
+      op = r["op"]?.try(&.as_s)
+      ids = r["ids"]?.try(&.as_a.map(&.to_s)) || [] of String
+      case op
+      when "clear"   then cmd_reconcile_mark(account, ids, true)
+      when "unclear" then cmd_reconcile_mark(account, ids, false)
+      else                cmd_reconcile_status(account, r["statement"]?.try(&.as_s) || op)
+      end
+    end
+
     # The reconciliation view: cleared balance vs ledger balance, the list of
     # not-yet-cleared transactions touching the account, and — if a statement
     # balance is given — whether the two agree.
-    private def cmd_reconcile_status(r : Jargon::Result) : Nil
-      account = r["account"].as_s
+    private def cmd_reconcile_status(account : String, statement : String?) : Nil
       cleared_raw = @store.cleared_balance(account)
       ledger_raw = @store.balances[account]? || 0_i64
       cleared = display_cents(account, cleared_raw)
@@ -736,10 +732,10 @@ module Finfry
         end
       end
 
-      if s = r["statement"]?.try(&.as_s)
-        statement = Money.parse(s)
-        diff = statement - cleared
-        puts "  statement:        %14s" % Money.format(statement)
+      if statement
+        target = Money.parse(statement)
+        diff = target - cleared
+        puts "  statement:        %14s" % Money.format(target)
         if diff.zero?
           puts "  ✓ reconciled"
         else
@@ -749,11 +745,9 @@ module Finfry
     end
 
     # Mark (clear:true) or unmark (clear:false) transactions for an account.
-    # `ids` is a list of transaction ids or the token "all" (all uncleared when
-    # clearing, all currently-cleared when unclearing).
-    private def cmd_reconcile_mark(r : Jargon::Result, clear : Bool) : Nil
-      account = r["account"].as_s
-      tokens = r["ids"].as_a.map(&.to_s)
+    # `tokens` is a list of transaction ids or the token "all" (all uncleared
+    # when clearing, all currently-cleared when unclearing).
+    private def cmd_reconcile_mark(account : String, tokens : Array(String), clear : Bool) : Nil
       ids =
         if tokens.includes?("all")
           clear ? uncleared_transactions(account).map(&.id) : @store.cleared_ids(account).dup
@@ -1345,7 +1339,7 @@ module Finfry
           JSON.parse(%({"type":"object","properties":{}}))),
         AgentTool.new("history", "history", false, "Recent change history (optional limit).",
           JSON.parse(%({"type":"object","properties":{"limit":{"type":"integer"}}}))),
-        AgentTool.new("reconcile", "reconcile status", false, "Reconciliation status for an account: cleared balance, ledger balance, uncleared transactions, and (with statement) whether it agrees.",
+        AgentTool.new("reconcile", "reconcile", false, "Reconciliation status for an account: cleared balance, ledger balance, uncleared transactions, and (with statement) whether it agrees.",
           JSON.parse(%({"type":"object","properties":{"account":{"type":"string"},"statement":{"type":"string"}},"required":["account"]}))),
         AgentTool.new("spend", "spend", true, "Record an expense. account = the Expenses:* account; from = the asset/liability paid from (default #{DEFAULT_ASSET_ACCOUNT}).",
           JSON.parse(%({"type":"object","properties":{"amount":{"type":"string"},"account":{"type":"string"},"from":{"type":"string"},"memo":{"type":"string"},"date":{"type":"string"},"recurrence":{"type":"string","enum":#{cadence}}},"required":["amount","account"]}))),
