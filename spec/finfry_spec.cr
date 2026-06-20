@@ -698,6 +698,56 @@ describe "Finfry::Store reconciliation" do
       File.delete(path) if File.exists?(path)
     end
   end
+
+  it "commit moves staged-cleared into the reconciled tier" do
+    with_store do |store|
+      a = store.record("2026-06-01", "a", expense("Expenses:Food", 5000))
+      b = store.record("2026-06-05", "b", expense("Expenses:Food", 1200))
+      store.set_cleared("Assets:Checking", [a.id, b.id], true)
+
+      store.reconcile!("Assets:Checking", -6200_i64, "2026-06-30").should eq(2)
+      # staged tier emptied, balance now lives in the reconciled tier
+      store.cleared_ids("Assets:Checking").should be_empty
+      store.cleared_balance("Assets:Checking").should eq(0_i64)
+      store.reconciled?("Assets:Checking", a.id).should be_true
+      store.reconciled_balance("Assets:Checking").should eq(-6200_i64)
+    end
+  end
+
+  it "records each finalized reconciliation for audit" do
+    with_store do |store|
+      a = store.record("2026-06-01", "a", expense("Expenses:Food", 5000))
+      store.set_cleared("Assets:Checking", [a.id], true)
+      store.reconcile!("Assets:Checking", -5000_i64, "2026-06-30")
+
+      last = store.last_reconciliation("Assets:Checking").not_nil!
+      last.statement.should eq(-5000_i64)
+      last.date.should eq("2026-06-30")
+      last.transaction_ids.should eq([a.id])
+    end
+  end
+
+  it "reconciled balance accumulates across sessions" do
+    with_store do |store|
+      a = store.record("2026-06-01", "a", expense("Expenses:Food", 5000))
+      b = store.record("2026-07-01", "b", expense("Expenses:Food", 3000))
+      store.set_cleared("Assets:Checking", [a.id], true)
+      store.reconcile!("Assets:Checking", -5000_i64, "2026-06-30")
+      store.set_cleared("Assets:Checking", [b.id], true)
+      store.reconcile!("Assets:Checking", -8000_i64, "2026-07-31")
+
+      store.reconciled_balance("Assets:Checking").should eq(-8000_i64)
+      store.reconciled_ids("Assets:Checking").sort.should eq([a.id, b.id].sort)
+    end
+  end
+
+  it "commit with nothing staged is a no-op" do
+    with_store do |store|
+      store.record("2026-06-01", "a", expense("Expenses:Food", 5000))
+      store.reconcile!("Assets:Checking", 0_i64, "2026-06-30").should eq(0)
+      store.last_reconciliation("Assets:Checking").should be_nil
+    end
+  end
 end
 
 def expense(account : String, cents : Int32) : Array(Finfry::Posting)

@@ -125,28 +125,38 @@ shows in `report daily`).
 
 ### Reconciliation
 
-Reconciling proves your ledger agrees with a bank or card statement. Each
-transaction is **cleared** or not *for a given account* — cleared means it has
-appeared on that account's statement (state is tracked per account, so checking
-and a credit card reconcile independently).
+Reconciling proves your ledger agrees with a bank or card statement. It works in
+two tiers, per account (so checking and a credit card reconcile independently) —
+the same stage-then-commit shape as [`due`](#recurring-entries):
+
+- **cleared** — *staged.* "I think this hit the bank." You toggle it while
+  working through the statement; it stays visible and is freely reversible.
+- **reconciled** — *committed.* Locked in by a finished, statement-balanced
+  reconciliation. These drop off the working list.
 
 ```
-finfry reconcile Assets:Checking            # cleared balance, ledger balance, uncleared list
-finfry reconcile Assets:Checking clear 1 2  # mark transactions that hit the statement (or 'all')
-finfry reconcile Assets:Checking 2738.00    # check the cleared balance against the statement total
+finfry reconcile Assets:Checking                 # working list + cleared/ledger balances
+finfry reconcile Assets:Checking clear 1 2       # stage: mark transactions that hit the statement (or 'all')
+finfry reconcile Assets:Checking unclear 2       # unstage (or 'all')
+finfry reconcile Assets:Checking -s 2738.00      # check cleared balance against the statement total
+finfry reconcile Assets:Checking commit -s 2738.00   # finalize (only if it balances)
 ```
 
-The account always comes first — every form is `reconcile <account> …` — and the
-second word is either an action (`clear`/`unclear`, with ids) or a statement
-balance to check against.
+The account always comes first — every form is `reconcile <account> …`. The
+status view lists every not-yet-reconciled transaction touching the account,
+marking staged-cleared ones with `*`, alongside the **cleared balance**
+(reconciled + staged — what should match a statement) and the full **ledger
+balance**. Pass `-s <balance>` and finfry tells you whether they agree or are
+**off by** some amount.
 
-The status view shows the **cleared balance** (only cleared transactions), the
-full **ledger balance**, and every uncleared transaction touching the account.
-Give the statement's ending balance and finfry tells you whether you're
-reconciled or **off by** some amount — keep clearing (or `unclear`) until it
-matches. Clearing is bookkeeping metadata, not a ledger change, so it is not
-undoable and never alters balances; the AI can read reconciliation status but
-clearing stays a human, statement-in-hand task.
+`commit` finalizes: it locks the staged transactions into the reconciled tier —
+but only if the cleared balance matches the statement, so you can never reconcile
+to a wrong number. Each commit is stamped (date + statement) for the audit trail
+and shown as "last reconciled" thereafter.
+
+Clearing and committing are bookkeeping metadata, not ledger changes — they never
+alter balances. The AI can *read* reconciliation status, but staging and
+committing stay a human, statement-in-hand task.
 
 ### Sign convention
 
@@ -273,10 +283,11 @@ finfry init [dir]                                      # create a per-directory 
 finfry path                                            # print the active ledger file
 
 # Reconcile an account against a bank/card statement (account always comes first)
-finfry reconcile Assets:Checking                       # cleared vs ledger balance + uncleared list
-finfry reconcile Assets:Checking 2738.00               # check against a statement balance
-finfry reconcile Assets:Checking clear 1 2 5           # mark transactions cleared (or 'all')
-finfry reconcile Assets:Checking unclear 5             # undo a clear (or 'all')
+finfry reconcile Assets:Checking                       # working list + cleared/ledger balances
+finfry reconcile Assets:Checking clear 1 2 5           # stage transactions as cleared (or 'all')
+finfry reconcile Assets:Checking unclear 5             # unstage (or 'all')
+finfry reconcile Assets:Checking -s 2738.00            # check cleared balance against the statement
+finfry reconcile Assets:Checking commit -s 2738.00     # finalize (locks staged, only if it balances)
 
 # Budgets (per account, rolled up over the subtree)
 finfry budget set Expenses:Food 400

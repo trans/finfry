@@ -246,6 +246,22 @@ module Finfry
     end
   end
 
+  # A finalized reconciliation: the statement an account was balanced against on
+  # a given date, and the transactions that were locked in by it. `statement` is
+  # stored in display orientation (the positive figure the user typed, matching
+  # how the statement reads).
+  struct Reconciliation
+    include JSON::Serializable
+
+    property account : String
+    property date : String # when finalized, YYYY-MM-DD
+    property statement : Int64
+    property transaction_ids : Array(Int32)
+
+    def initialize(@account, @date, @statement, @transaction_ids)
+    end
+  end
+
   # The full persisted state: an id counter, all transactions, per-account
   # monthly budget limits (cents), the declared chart of accounts, the
   # unknown-account policy, and the undo journal.
@@ -264,9 +280,15 @@ module Finfry
     # card's apr/limit/due-day. Visible to the AI; secrets are a later feature.
     property account_meta : Hash(String, Hash(String, String)) = {} of String => Hash(String, String)
 
-    # Reconciliation: per-account set of transaction ids marked cleared against
-    # that account's statement (account => [transaction ids]).
+    # Reconciliation, two-tier. `cleared` is the staged tier — transactions
+    # toggled cleared during a session, still editable (account => [ids]).
+    # `reconciled` is the committed tier — transactions locked in by a finished,
+    # statement-balanced reconciliation; they drop off the working list.
     property cleared : Hash(String, Array(Int32)) = {} of String => Array(Int32)
+    property reconciled : Hash(String, Array(Int32)) = {} of String => Array(Int32)
+
+    # Audit trail of finalized reconciliations, newest last.
+    property reconciliations : Array(Reconciliation) = [] of Reconciliation
 
     # "strict" | "guard" | "off"
     property account_policy : String = "strict"

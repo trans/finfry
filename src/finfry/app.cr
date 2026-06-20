@@ -427,17 +427,19 @@ module Finfry
       cli.subcommand "due", due
 
       # Account-first by design: the account is common to every form, so it
-      # always comes right after `reconcile`. The second word is either an
-      # action ("clear"/"unclear", followed by ids) or — for the status view —
-      # an optional statement balance to check against.
+      # always comes right after `reconcile`. An optional action (clear/unclear
+      # to stage, commit to finalize) follows, with ids for clear/unclear. The
+      # statement balance is the -s flag — checked in the status view, required
+      # by commit.
       cli.subcommand "reconcile", yaml: <<-YAML
         type: object
-        description: Reconcile an account — status, or clear/unclear transactions
-        positional: [account, op, ids]
+        description: Reconcile an account against a statement (stage with clear/unclear, then commit)
+        positional: [account, action, ids]
         properties:
           account: {type: string, description: "The account to reconcile"}
-          op: {type: string, description: "'clear'/'unclear' (with ids), or a statement balance to check against"}
+          action: {type: string, enum: [clear, unclear, commit], description: "Stage (clear/unclear) or finalize (commit)"}
           ids: {type: array, description: "Transaction ids to clear/unclear, or 'all'"}
+          statement: {type: string, short: s, description: "Statement ending balance (checked by status, required by commit)"}
         required: [account]
         YAML
 
@@ -694,63 +696,95 @@ module Finfry
       end
     end
 
-    # Route the account-first reconcile command: `reconcile <account>` (status),
-    # `reconcile <account> <balance>` (status vs statement), and
-    # `reconcile <account> clear|unclear <ids|all>`. The AI passes the statement
-    # as a named `statement` property rather than positionally.
+    # Route the account-first reconcile command. `reconcile <account>` shows
+    # status (optionally checked against -s <balance>); `clear`/`unclear` stage
+    # the cleared tier; `commit` finalizes against the statement. The AI passes
+    # the statement as the same named `statement` property.
     private def cmd_reconcile(r : Jargon::Result) : Nil
       account = r["account"].as_s
-      op = r["op"]?.try(&.as_s)
+      statement = r["statement"]?.try(&.as_s)
       ids = r["ids"]?.try(&.as_a.map(&.to_s)) || [] of String
-      case op
+      case r["action"]?.try(&.as_s)
       when "clear"   then cmd_reconcile_mark(account, ids, true)
       when "unclear" then cmd_reconcile_mark(account, ids, false)
-      else                cmd_reconcile_status(account, r["statement"]?.try(&.as_s) || op)
+      when "commit"  then cmd_reconcile_commit(account, statement)
+      else                cmd_reconcile_status(account, statement)
       end
     end
 
-    # The reconciliation view: cleared balance vs ledger balance, the list of
-    # not-yet-cleared transactions touching the account, and — if a statement
-    # balance is given — whether the two agree.
+    # The reconciliation view: the working list (every not-yet-reconciled
+    # transaction touching the account, each marked `*` if staged-cleared), the
+    # cleared balance (committed + staged — what should match a statement), the
+    # full ledger balance, and — if -s is given — whether they agree.
     private def cmd_reconcile_status(account : String, statement : String?) : Nil
-      cleared_raw = @store.cleared_balance(account)
-      ledger_raw = @store.balances[account]? || 0_i64
+      cleared_raw = @store.reconciled_balance(account) + @store.cleared_balance(account)
       cleared = display_cents(account, cleared_raw)
-      ledger = display_cents(account, ledger_raw)
-      uncleared = uncleared_transactions(account)
+      ledger = display_cents(account, @store.balances[account]? || 0_i64)
+      staged = @store.cleared_ids(account).to_set
+      working = reconcile_working_list(account)
 
       puts "Reconcile #{account}"
       puts "  cleared balance:  %14s" % Money.format(cleared)
       puts "  ledger balance:   %14s" % Money.format(ledger)
 
-      unless uncleared.empty?
-        puts "  uncleared (#{uncleared.size}):"
-        uncleared.each do |t|
+      if last = @store.last_reconciliation(account)
+        puts "  last reconciled:  %14s on %s" % {Money.format(last.statement), last.date}
+      end
+
+      unless working.empty?
+        puts "  to reconcile (#{working.size}, #{staged.size} cleared):"
+        working.each do |t|
+          mark = staged.includes?(t.id) ? "*" : " "
           amount = display_cents(account, t.postings.sum(0_i64) { |p| p.account == account ? p.amount : 0_i64 })
           memo = t.description.empty? ? "" : "  #{t.description}"
-          puts "    ##{t.id}  #{t.date}  %12s%s" % {Money.format(amount), memo}
+          puts "  #{mark} ##{t.id}  #{t.date}  %12s%s" % {Money.format(amount), memo}
         end
       end
 
       if statement
-        target = Money.parse(statement)
-        diff = target - cleared
-        puts "  statement:        %14s" % Money.format(target)
+        diff = Money.parse(statement) - cleared
+        puts "  statement:        %14s" % Money.format(Money.parse(statement))
         if diff.zero?
-          puts "  ✓ reconciled"
+          puts "  ✓ cleared balance matches — `reconcile #{account} commit -s #{statement}` to finalize"
         else
-          puts "  ⚠ off by %s — clear/unclear until cleared balance matches the statement" % Money.format(diff)
+          puts "  ⚠ off by %s — clear/unclear until the cleared balance matches the statement" % Money.format(diff)
         end
       end
     end
 
-    # Mark (clear:true) or unmark (clear:false) transactions for an account.
-    # `tokens` is a list of transaction ids or the token "all" (all uncleared
-    # when clearing, all currently-cleared when unclearing).
+    # Finalize: every staged-cleared transaction is locked into the committed
+    # tier, but only if the cleared balance matches the statement — so you can't
+    # reconcile to a wrong number. Requires -s.
+    private def cmd_reconcile_commit(account : String, statement : String?) : Nil
+      unless statement
+        puts "commit needs the statement balance: reconcile #{account} commit -s <balance>"
+        return
+      end
+      if @store.cleared_ids(account).empty?
+        puts "Nothing staged to commit — clear the transactions on the statement first."
+        return
+      end
+
+      target = Money.parse(statement)
+      cleared = display_cents(account, @store.reconciled_balance(account) + @store.cleared_balance(account))
+      diff = target - cleared
+      unless diff.zero?
+        puts "Can't commit — cleared balance is %s but the statement is %s (off by %s)." % {Money.format(cleared), Money.format(target), Money.format(diff)}
+        puts "Clear/unclear until they match, then commit."
+        return
+      end
+
+      locked = @store.reconcile!(account, target, today)
+      puts "✓ Reconciled #{account} to #{Money.format(target)} as of #{today} (#{locked} transaction(s) locked)."
+    end
+
+    # Mark (clear:true) or unmark (clear:false) transactions in the staged tier.
+    # `tokens` is a list of transaction ids or "all" (all not-yet-reconciled
+    # when clearing, all currently-staged when unclearing).
     private def cmd_reconcile_mark(account : String, tokens : Array(String), clear : Bool) : Nil
       ids =
         if tokens.includes?("all")
-          clear ? uncleared_transactions(account).map(&.id) : @store.cleared_ids(account).dup
+          clear ? reconcile_working_list(account).map(&.id) : @store.cleared_ids(account).dup
         else
           tokens.compact_map(&.to_i?)
         end
@@ -765,10 +799,11 @@ module Finfry
       puts "#{verb} #{changed} transaction(s) for #{account}."
     end
 
-    # Transactions with a posting directly on `account` (exact, not subtree) that
-    # are not yet cleared, oldest first.
-    private def uncleared_transactions(account : String) : Array(Transaction)
-      done = @store.cleared_ids(account).to_set
+    # The working list: transactions with a posting directly on `account`
+    # (exact, not subtree) that aren't yet reconciled (committed), oldest first.
+    # Staged-cleared ones stay here so they remain visible and un-clearable.
+    private def reconcile_working_list(account : String) : Array(Transaction)
+      done = @store.reconciled_ids(account).to_set
       @store.transactions
         .select { |t| !done.includes?(t.id) && t.postings.any? { |p| p.account == account } }
         .sort_by { |t| {t.date, t.id} }
@@ -1339,7 +1374,7 @@ module Finfry
           JSON.parse(%({"type":"object","properties":{}}))),
         AgentTool.new("history", "history", false, "Recent change history (optional limit).",
           JSON.parse(%({"type":"object","properties":{"limit":{"type":"integer"}}}))),
-        AgentTool.new("reconcile", "reconcile", false, "Reconciliation status for an account: cleared balance, ledger balance, uncleared transactions, and (with statement) whether it agrees.",
+        AgentTool.new("reconcile", "reconcile", false, "Reconciliation status for an account: cleared balance (reconciled + staged), ledger balance, the working list of not-yet-reconciled transactions, and (with statement) whether they agree. Read-only; staging/committing is a human task.",
           JSON.parse(%({"type":"object","properties":{"account":{"type":"string"},"statement":{"type":"string"}},"required":["account"]}))),
         AgentTool.new("spend", "spend", true, "Record an expense. account = the Expenses:* account; from = the asset/liability paid from (default #{DEFAULT_ASSET_ACCOUNT}).",
           JSON.parse(%({"type":"object","properties":{"amount":{"type":"string"},"account":{"type":"string"},"from":{"type":"string"},"memo":{"type":"string"},"date":{"type":"string"},"recurrence":{"type":"string","enum":#{cadence}}},"required":["amount","account"]}))),

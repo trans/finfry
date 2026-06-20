@@ -289,15 +289,53 @@ module Finfry
       changed
     end
 
+    # Committed (reconciled) tier.
+    def reconciled_ids(account : String) : Array(Int32)
+      @db.reconciled[account]? || [] of Int32
+    end
+
+    def reconciled?(account : String, id : Int32) : Bool
+      (@db.reconciled[account]? || [] of Int32).includes?(id)
+    end
+
     # Net of `account`'s own postings (exact match — a statement reconciles one
-    # account, not a subtree) across transactions cleared for it. A cleared id
-    # with no surviving transaction is ignored, so stale ids are harmless.
-    def cleared_balance(account : String) : Int64
-      ids = (@db.cleared[account]? || [] of Int32).to_set
+    # account, not a subtree) across the transactions in `ids`. A id with no
+    # surviving transaction is ignored, so stale ids are harmless.
+    private def balance_of(account : String, ids : Array(Int32)) : Int64
+      set = ids.to_set
       @db.transactions.sum(0_i64) do |t|
-        next 0_i64 unless ids.includes?(t.id)
+        next 0_i64 unless set.includes?(t.id)
         t.postings.sum(0_i64) { |p| p.account == account ? p.amount : 0_i64 }
       end
+    end
+
+    # Balance of the staged tier (cleared-but-not-committed).
+    def cleared_balance(account : String) : Int64
+      balance_of(account, @db.cleared[account]? || [] of Int32)
+    end
+
+    # Balance of the committed tier (locked by past reconciliations).
+    def reconciled_balance(account : String) : Int64
+      balance_of(account, @db.reconciled[account]? || [] of Int32)
+    end
+
+    # Finalize a reconciliation: move every staged-cleared transaction into the
+    # committed tier and record the statement it was balanced against. The
+    # caller verifies the balance matches first. Returns the number locked in.
+    def reconcile!(account : String, statement : Int64, date : String) : Int32
+      staged = @db.cleared[account]? || [] of Int32
+      return 0 if staged.empty?
+      committed = (@db.reconciled[account] ||= [] of Int32)
+      staged.each { |id| committed << id unless committed.includes?(id) }
+      @db.reconciliations << Reconciliation.new(account, date, statement, staged.dup)
+      @db.cleared.delete(account)
+      save
+      staged.size
+    end
+
+    # The most recent finalized reconciliation for an account, if any.
+    def last_reconciliation(account : String) : Reconciliation?
+      @db.reconciliations.reverse_each.find { |r| r.account == account }
     end
 
     # Remove an account from the chart. Returns false if it wasn't declared.
