@@ -157,6 +157,19 @@ but only if the cleared balance matches the statement, so you can never reconcil
 to a wrong number. Each commit is stamped (date + statement) for the audit trail
 and shown as "last reconciled" thereafter.
 
+If you're off by a small unexplained amount you can't track down, add `--adjust`:
+
+```
+finfry reconcile Assets:Checking commit 2738 --adjust
+```
+
+This posts the residual as a **normal, balanced, undoable transaction** to
+`Expenses:ShortsAndOverages` (the classic "cash over and short" account) — one
+leg closes the gap on the account, the other records the difference — then
+commits. It never edits an existing entry or breaks double-entry. This is only
+for small residuals; a real, explainable difference (a forgotten bill, a fee)
+should be entered manually to its proper account, then reconciled normally.
+
 Clearing and committing are bookkeeping metadata, not ledger changes — they never
 alter balances. The AI can *read* reconciliation status, but staging and
 committing stay a human, statement-in-hand task.
@@ -291,6 +304,7 @@ finfry reconcile Assets:Checking clear 1 2 5           # stage transactions as c
 finfry reconcile Assets:Checking unclear 5             # unstage (or 'all')
 finfry reconcile Assets:Checking balance 2738.00       # check cleared balance against the statement
 finfry reconcile Assets:Checking commit 2738.00        # finalize (locks staged, only if it balances)
+finfry reconcile Assets:Checking commit 2738.00 --adjust   # ...or book a small residual to Shorts&Overages
 
 # Budgets (per account, rolled up over the subtree)
 finfry budget set Expenses:Food 400

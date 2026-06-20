@@ -440,6 +440,7 @@ module Finfry
           account: {type: string, description: "The account to reconcile"}
           action: {type: string, enum: [clear, unclear, balance, commit], description: "Stage (clear/unclear <ids>), check (balance <amount>), or finalize (commit <amount>)"}
           args: {type: array, description: "Transaction ids for clear/unclear (or 'all'); the statement balance for balance/commit"}
+          adjust: {type: boolean, description: "With commit: post any small residual to Expenses:ShortsAndOverages so it balances"}
         required: [account]
         YAML
 
@@ -707,7 +708,7 @@ module Finfry
       when "clear"   then cmd_reconcile_mark(account, args, true)
       when "unclear" then cmd_reconcile_mark(account, args, false)
       when "balance" then cmd_reconcile_status(account, args.first?)
-      when "commit"  then cmd_reconcile_commit(account, args.first?)
+      when "commit"  then cmd_reconcile_commit(account, args.first?, r["adjust"]?.try(&.as_bool) || false)
       else                cmd_reconcile_status(account, r["statement"]?.try(&.as_s))
       end
     end
@@ -755,27 +756,48 @@ module Finfry
     # Finalize: every staged-cleared transaction is locked into the committed
     # tier, but only if the cleared balance matches the statement — so you can't
     # reconcile to a wrong number. Requires -s.
-    private def cmd_reconcile_commit(account : String, statement : String?) : Nil
+    # Where --adjust books a small unexplained reconciliation residual — the
+    # classic "cash over and short" account. Big or explainable differences
+    # should be entered manually to their real accounts instead.
+    SHORT_OVER_ACCOUNT = "Expenses:ShortsAndOverages"
+
+    private def cmd_reconcile_commit(account : String, statement : String?, adjust : Bool) : Nil
       unless statement
         puts "commit needs the statement balance: reconcile #{account} commit <balance>"
         return
       end
+
+      target = Money.parse(statement)
+      diff = target - display_cents(account, @store.reconciled_balance(account) + @store.cleared_balance(account))
+
+      unless diff.zero?
+        unless adjust
+          puts "Can't commit — cleared balance is %s but the statement is %s (off by %s)." % {Money.format(target - diff), Money.format(target), Money.format(diff)}
+          puts "Clear/unclear until they match (or `commit #{statement} --adjust` to book the residual to #{SHORT_OVER_ACCOUNT})."
+          return
+        end
+        post_reconcile_adjustment(account, diff)
+      end
+
       if @store.cleared_ids(account).empty?
         puts "Nothing staged to commit — clear the transactions on the statement first."
         return
       end
 
-      target = Money.parse(statement)
-      cleared = display_cents(account, @store.reconciled_balance(account) + @store.cleared_balance(account))
-      diff = target - cleared
-      unless diff.zero?
-        puts "Can't commit — cleared balance is %s but the statement is %s (off by %s)." % {Money.format(cleared), Money.format(target), Money.format(diff)}
-        puts "Clear/unclear until they match, then commit."
-        return
-      end
-
       locked = @store.reconcile!(account, target, today)
       puts "✓ Reconciled #{account} to #{Money.format(target)} as of #{today} (#{locked} transaction(s) locked)."
+    end
+
+    # Post the residual as a normal, balanced, undoable transaction: one leg
+    # closes the gap on the reconciled account, the other lands in the
+    # short-and-over expense account. It's staged cleared so the very next
+    # reconcile! locks it in along with everything else.
+    private def post_reconcile_adjustment(account : String, diff : Int64) : Nil
+      @store.declare_account(SHORT_OVER_ACCOUNT) unless @store.account_known?(SHORT_OVER_ACCOUNT)
+      raw = display_cents(account, diff) # display_cents is its own inverse (a conditional negate)
+      postings = [Posting.new(account, raw), Posting.new(SHORT_OVER_ACCOUNT, -raw)]
+      txn = commit(today, "Reconciliation adjustment (#{account})", postings)
+      @store.set_cleared(account, [txn.id], true)
     end
 
     # Mark (clear:true) or unmark (clear:false) transactions in the staged tier.

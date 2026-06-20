@@ -624,6 +624,43 @@ describe Finfry::App do
       File.delete(path) if File.exists?(path)
     end
   end
+
+  it "commit --adjust books the residual to Expenses:ShortsAndOverages and balances" do
+    with_store do |store|
+      a = store.record("2026-06-01", "salary",
+        [Finfry::Posting.new("Assets:Checking", 100000_i64), Finfry::Posting.new("Income:Salary", -100000_i64)])
+      store.set_cleared("Assets:Checking", [a.id], true)
+
+      app = Finfry::App.new(store)
+      # statement is $3 under the ledger — a fee we never recorded
+      app.execute_tool("reconcile",
+        JSON.parse(%({"account":"Assets:Checking","action":"commit","args":["997"],"adjust":true})))
+
+      adj = store.transactions.find { |t| t.postings.any? { |p| p.account == "Expenses:ShortsAndOverages" } }.not_nil!
+      adj.balanced?.should be_true
+      adj.postings.find { |p| p.account == "Assets:Checking" }.not_nil!.amount.should eq(-300_i64)
+
+      # the account is now reconciled to the statement, adjustment included
+      store.reconciled?("Assets:Checking", a.id).should be_true
+      store.reconciled?("Assets:Checking", adj.id).should be_true
+      (store.balances["Assets:Checking"]? || 0_i64).should eq(99700_i64)
+    end
+  end
+
+  it "commit refuses an unbalanced reconciliation without --adjust" do
+    with_store do |store|
+      a = store.record("2026-06-01", "salary",
+        [Finfry::Posting.new("Assets:Checking", 100000_i64), Finfry::Posting.new("Income:Salary", -100000_i64)])
+      store.set_cleared("Assets:Checking", [a.id], true)
+
+      Finfry::App.new(store).execute_tool("reconcile",
+        JSON.parse(%({"account":"Assets:Checking","action":"commit","args":["997"]})))
+
+      # nothing locked, no adjustment posted
+      store.reconciled_ids("Assets:Checking").should be_empty
+      store.transactions.any? { |t| t.postings.any? { |p| p.account == "Expenses:ShortsAndOverages" } }.should be_false
+    end
+  end
 end
 
 # A balanced, recurring expense transaction paid from Assets:Checking.
