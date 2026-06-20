@@ -298,6 +298,7 @@ finfry undo 4                                          # reverse an older change
 finfry redo                                            # bring back the change undo just removed
 finfry init [dir]                                      # create a per-directory book
 finfry path                                            # print the active ledger file
+finfry version                                         # print the finfry version
 
 # Reconcile an account against a bank/card statement (account always comes first)
 finfry reconcile Assets:Checking                       # working list + cleared/ledger balances

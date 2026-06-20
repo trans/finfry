@@ -296,6 +296,11 @@ module Finfry
         description: Print the path to the active ledger file
         YAML
 
+      cli.subcommand "version", yaml: <<-YAML
+        type: object
+        description: Print the finfry version
+        YAML
+
       cli.subcommand "mcp", yaml: <<-YAML
         type: object
         description: Run as an MCP server (stdio) for use inside an agent harness
@@ -475,6 +480,7 @@ module Finfry
       when "history"              then cmd_history(result)
       when "init"                 then cmd_init(result)
       when "path"                 then cmd_path(result)
+      when "version"              then cmd_version(result)
       when "mcp"                  then cmd_mcp(result)
       when "delete"               then cmd_delete(result)
       when "recurring add"        then cmd_recurring_add(result)
@@ -1043,6 +1049,10 @@ module Finfry
 
     private def cmd_path(r : Jargon::Result) : Nil
       puts @store.path
+    end
+
+    private def cmd_version(r : Jargon::Result) : Nil
+      puts "finfry #{Finfry::VERSION}"
     end
 
     private def cmd_mcp(r : Jargon::Result) : Nil
