@@ -338,6 +338,11 @@ module Finfry
       @db.reconciliations.reverse_each.find { |r| r.account == account }
     end
 
+    # Every finalized reconciliation for an account, oldest first.
+    def reconciliations(account : String) : Array(Reconciliation)
+      @db.reconciliations.select { |r| r.account == account }
+    end
+
     # Remove an account from the chart. Returns false if it wasn't declared.
     # (If postings still reference it, it stays "known" via use.)
     def undeclare_account(name : String) : Bool

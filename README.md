@@ -282,6 +282,7 @@ finfry add -m "market run" \
 
 # Reports
 finfry register [-a Expenses:Food] [-m 2026-06] [-n 10]   # transactions (the ledger register)
+finfry register -a Assets:Checking                     # account view: compact, with a running balance
 finfry register -s 2026-06-01 -u 2026-06-30 --min 100  # filter by date range / amount...
 finfry register -q rent                                # ...or memo text (--match)
 finfry balance [Assets]                                # account balances (quick lookup)
@@ -305,6 +306,7 @@ finfry reconcile Assets:Checking unclear 5             # unstage (or 'all')
 finfry reconcile Assets:Checking balance 2738.00       # check cleared balance against the statement
 finfry reconcile Assets:Checking commit 2738.00        # finalize (locks staged, only if it balances)
 finfry reconcile Assets:Checking commit 2738.00 --adjust   # ...or book a small residual to Shorts&Overages
+finfry reconcile Assets:Checking history                # past finalized reconciliations (audit trail)
 
 # Budgets (per account, rolled up over the subtree)
 finfry budget set Expenses:Food 400

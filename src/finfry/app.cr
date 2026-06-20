@@ -438,7 +438,7 @@ module Finfry
         positional: [account, action, args]
         properties:
           account: {type: string, description: "The account to reconcile"}
-          action: {type: string, enum: [clear, unclear, balance, commit], description: "Stage (clear/unclear <ids>), check (balance <amount>), or finalize (commit <amount>)"}
+          action: {type: string, enum: [clear, unclear, balance, commit, history], description: "Stage (clear/unclear <ids>), check (balance <amount>), finalize (commit <amount>), or list past reconciliations (history)"}
           args: {type: array, description: "Transaction ids for clear/unclear (or 'all'); the statement balance for balance/commit"}
           adjust: {type: boolean, description: "With commit: post any small residual to Expenses:ShortsAndOverages so it balances"}
         required: [account]
@@ -654,7 +654,19 @@ module Finfry
 
     private def cmd_register(r : Jargon::Result) : Nil
       txns = @store.transactions
-      if account = r["account"]?.try(&.as_s)
+      account = r["account"]?.try(&.as_s)
+
+      # When filtered to an account, precompute the true running balance at each
+      # of its transactions (over full history, in date order) so the column
+      # stays accurate even when later filters/limit show only a window.
+      running = nil
+      if account
+        running = {} of Int32 => Int64
+        bal = 0_i64
+        @store.transactions.select(&.touches?(account)).sort_by { |t| {t.date, t.id} }.each do |t|
+          bal += account_leg(t, account)
+          running[t.id] = display_cents(account, bal)
+        end
         txns = txns.select(&.touches?(account))
       end
       if month = r["month"]?.try(&.as_s)
@@ -688,13 +700,33 @@ module Finfry
         return
       end
 
-      txns.each do |t|
-        header = "##{t.id}  #{t.date}"
-        header += "  #{t.description}" unless t.description.empty?
-        header += "  (#{t.recurrence})" if t.recurrence
-        puts header
-        puts render(t)
+      # Account view: a compact one-line-per-transaction register with the
+      # account's own movement and a running balance. Unfiltered view: full
+      # postings per transaction.
+      if account && (run = running)
+        txns.each do |t|
+          memo = t.description
+          memo += " (#{t.recurrence})" if t.recurrence
+          memo = "#{memo[0, 27]}…" if memo.size > 28
+          puts "#%-4d %s  %-28s %13s  %13s" % {
+            t.id, t.date, memo,
+            Money.format(display_cents(account, account_leg(t, account))), Money.format(run[t.id]),
+          }
+        end
+      else
+        txns.each do |t|
+          header = "##{t.id}  #{t.date}"
+          header += "  #{t.description}" unless t.description.empty?
+          header += "  (#{t.recurrence})" if t.recurrence
+          puts header
+          puts render(t)
+        end
       end
+    end
+
+    # The signed movement of `account` (its subtree) within one transaction.
+    private def account_leg(txn : Transaction, account : String) : Int64
+      txn.postings.sum(0_i64) { |p| Finfry.in_subtree?(p.account, account) ? p.amount : 0_i64 }
     end
 
     # Route the account-first reconcile command. `reconcile <account>` shows
@@ -709,6 +741,7 @@ module Finfry
       when "unclear" then cmd_reconcile_mark(account, args, false)
       when "balance" then cmd_reconcile_status(account, args.first?)
       when "commit"  then cmd_reconcile_commit(account, args.first?, r["adjust"]?.try(&.as_bool) || false)
+      when "history" then cmd_reconcile_history(account)
       else                cmd_reconcile_status(account, r["statement"]?.try(&.as_s))
       end
     end
@@ -798,6 +831,21 @@ module Finfry
       postings = [Posting.new(account, raw), Posting.new(SHORT_OVER_ACCOUNT, -raw)]
       txn = commit(today, "Reconciliation adjustment (#{account})", postings)
       @store.set_cleared(account, [txn.id], true)
+    end
+
+    # List an account's finalized reconciliations — the audit trail of what was
+    # balanced against which statement, and when.
+    private def cmd_reconcile_history(account : String) : Nil
+      recs = @store.reconciliations(account)
+      if recs.empty?
+        puts "No reconciliations for #{account} yet."
+        return
+      end
+      puts "Reconciliations for #{account}"
+      recs.each do |rec|
+        n = rec.transaction_ids.size
+        puts "  %s  %14s  (%d txn%s)" % {rec.date, Money.format(rec.statement), n, n == 1 ? "" : "s"}
+      end
     end
 
     # Mark (clear:true) or unmark (clear:false) transactions in the staged tier.

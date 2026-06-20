@@ -647,6 +647,22 @@ describe Finfry::App do
     end
   end
 
+  it "register -a shows a running balance reflecting full history, not just the window" do
+    with_store do |store|
+      store.record("2026-06-01", "salary",
+        [Finfry::Posting.new("Assets:Checking", 100000_i64), Finfry::Posting.new("Income:Salary", -100000_i64)])
+      store.record("2026-06-05", "food",
+        [Finfry::Posting.new("Expenses:Food", 20000_i64), Finfry::Posting.new("Assets:Checking", -20000_i64)])
+
+      out, err = Finfry::App.new(store).execute_tool("register",
+        JSON.parse(%({"account":"Assets:Checking","since":"2026-06-05"})))
+      err.should be_false
+      out.should contain("food")
+      out.should_not contain("salary") # windowed out
+      out.should contain("$800.00")    # but the running balance is the true total
+    end
+  end
+
   it "commit refuses an unbalanced reconciliation without --adjust" do
     with_store do |store|
       a = store.record("2026-06-01", "salary",
@@ -783,6 +799,23 @@ describe "Finfry::Store reconciliation" do
       store.record("2026-06-01", "a", expense("Expenses:Food", 5000))
       store.reconcile!("Assets:Checking", 0_i64, "2026-06-30").should eq(0)
       store.last_reconciliation("Assets:Checking").should be_nil
+    end
+  end
+
+  it "lists all finalized reconciliations for an account, oldest first" do
+    with_store do |store|
+      a = store.record("2026-06-01", "a", expense("Expenses:Food", 100))
+      store.set_cleared("Assets:Checking", [a.id], true)
+      store.reconcile!("Assets:Checking", -100_i64, "2026-06-30")
+      b = store.record("2026-07-01", "b", expense("Expenses:Food", 50))
+      store.set_cleared("Assets:Checking", [b.id], true)
+      store.reconcile!("Assets:Checking", -150_i64, "2026-07-31")
+
+      recs = store.reconciliations("Assets:Checking")
+      recs.size.should eq(2)
+      recs.first.date.should eq("2026-06-30")
+      recs.last.statement.should eq(-150_i64)
+      store.reconciliations("Liabilities:CreditCard").should be_empty
     end
   end
 end
