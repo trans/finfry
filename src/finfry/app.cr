@@ -427,19 +427,19 @@ module Finfry
       cli.subcommand "due", due
 
       # Account-first by design: the account is common to every form, so it
-      # always comes right after `reconcile`. An optional action (clear/unclear
-      # to stage, commit to finalize) follows, with ids for clear/unclear. The
-      # statement balance is the -s flag — checked in the status view, required
-      # by commit.
+      # always comes right after `reconcile`. An optional action follows, and
+      # each action owns its trailing argument — clear/unclear take ids,
+      # balance/commit take the statement balance. Keeping the slot after the
+      # account a strict enum means a forgotten verb (`reconcile A 1 2`) fails
+      # loudly instead of misreading "1" as a balance.
       cli.subcommand "reconcile", yaml: <<-YAML
         type: object
-        description: Reconcile an account against a statement (stage with clear/unclear, then commit)
-        positional: [account, action, ids]
+        description: Reconcile an account against a statement (stage with clear/unclear, check with balance, then commit)
+        positional: [account, action, args]
         properties:
           account: {type: string, description: "The account to reconcile"}
-          action: {type: string, enum: [clear, unclear, commit], description: "Stage (clear/unclear) or finalize (commit)"}
-          ids: {type: array, description: "Transaction ids to clear/unclear, or 'all'"}
-          statement: {type: string, short: s, description: "Statement ending balance (checked by status, required by commit)"}
+          action: {type: string, enum: [clear, unclear, balance, commit], description: "Stage (clear/unclear <ids>), check (balance <amount>), or finalize (commit <amount>)"}
+          args: {type: array, description: "Transaction ids for clear/unclear (or 'all'); the statement balance for balance/commit"}
         required: [account]
         YAML
 
@@ -697,18 +697,18 @@ module Finfry
     end
 
     # Route the account-first reconcile command. `reconcile <account>` shows
-    # status (optionally checked against -s <balance>); `clear`/`unclear` stage
-    # the cleared tier; `commit` finalizes against the statement. The AI passes
-    # the statement as the same named `statement` property.
+    # status; `clear`/`unclear <ids>` stage the cleared tier; `balance <amount>`
+    # checks against the statement; `commit <amount>` finalizes. The AI hits the
+    # default branch and passes the statement as the named `statement` property.
     private def cmd_reconcile(r : Jargon::Result) : Nil
       account = r["account"].as_s
-      statement = r["statement"]?.try(&.as_s)
-      ids = r["ids"]?.try(&.as_a.map(&.to_s)) || [] of String
+      args = r["args"]?.try(&.as_a.map(&.to_s)) || [] of String
       case r["action"]?.try(&.as_s)
-      when "clear"   then cmd_reconcile_mark(account, ids, true)
-      when "unclear" then cmd_reconcile_mark(account, ids, false)
-      when "commit"  then cmd_reconcile_commit(account, statement)
-      else                cmd_reconcile_status(account, statement)
+      when "clear"   then cmd_reconcile_mark(account, args, true)
+      when "unclear" then cmd_reconcile_mark(account, args, false)
+      when "balance" then cmd_reconcile_status(account, args.first?)
+      when "commit"  then cmd_reconcile_commit(account, args.first?)
+      else                cmd_reconcile_status(account, r["statement"]?.try(&.as_s))
       end
     end
 
@@ -745,7 +745,7 @@ module Finfry
         diff = Money.parse(statement) - cleared
         puts "  statement:        %14s" % Money.format(Money.parse(statement))
         if diff.zero?
-          puts "  ✓ cleared balance matches — `reconcile #{account} commit -s #{statement}` to finalize"
+          puts "  ✓ cleared balance matches — `reconcile #{account} commit #{statement}` to finalize"
         else
           puts "  ⚠ off by %s — clear/unclear until the cleared balance matches the statement" % Money.format(diff)
         end
@@ -757,7 +757,7 @@ module Finfry
     # reconcile to a wrong number. Requires -s.
     private def cmd_reconcile_commit(account : String, statement : String?) : Nil
       unless statement
-        puts "commit needs the statement balance: reconcile #{account} commit -s <balance>"
+        puts "commit needs the statement balance: reconcile #{account} commit <balance>"
         return
       end
       if @store.cleared_ids(account).empty?
