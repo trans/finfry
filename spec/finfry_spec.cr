@@ -1073,3 +1073,43 @@ describe Finfry::Web do
     end
   end
 end
+
+describe "Finfry::App#balance_tree" do
+  it "rolls subtotals up the tree and collapses single-child chains" do
+    with_store do |store|
+      store.record("2026-06-01", "salary",
+        [Finfry::Posting.new("Assets:Checking", 100000_i64), Finfry::Posting.new("Income:Salary", -100000_i64)])
+      store.record("2026-06-02", "save",
+        [Finfry::Posting.new("Assets:Savings", 30000_i64), Finfry::Posting.new("Assets:Checking", -30000_i64)])
+      store.record("2026-06-03", "coffee",
+        [Finfry::Posting.new("Expenses:Food:Coffee", 450_i64), Finfry::Posting.new("Assets:Checking", -450_i64)])
+
+      nodes = Finfry::App.new(store).balance_tree
+      lines = nodes.map { |n| {n.depth, n.label, n.balance, n.leaf?} }
+      lines.should eq([
+        {0, "Assets", 99550_i64, false},
+        {1, "Checking", 69550_i64, true},
+        {1, "Savings", 30000_i64, true},
+        {0, "Expenses:Food:Coffee", 450_i64, true}, # single-child chain collapsed
+        {0, "Income:Salary", 100000_i64, true},     # credit-normal shown positive
+      ])
+      nodes[3].name.should eq("Expenses:Food:Coffee") # full path kept for links
+    end
+  end
+end
+
+describe "Finfry::Web register defaults" do
+  it "shows the current month unless a filter is given" do
+    with_store do |store|
+      store.record("2020-01-01", "ancient", expense("Expenses:Food", 100))
+      web = Finfry::Web.new(store)
+      _, _, body = web_request(web, "GET", "/register")
+      body.should_not contain("ancient")
+      body.should contain("all time")
+      _, _, body = web_request(web, "GET", "/register?all=1")
+      body.should contain("ancient")
+      _, _, body = web_request(web, "GET", "/register?q=anc")
+      body.should contain("ancient")
+    end
+  end
+end

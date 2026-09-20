@@ -3,8 +3,10 @@
   <p class="sub">What came in and went out during <strong><%= @statement.month %></strong></p>
 </header>
 
-<form class="filters" method="get" action="/income">
+<form class="filters month-form" method="get" action="/income">
+  <a class="button quiet" href="<%= url "/income", month: prev_month(@statement.month) %>" aria-label="Previous month">‹</a>
   <label>Month <input type="month" name="month" value="<%= @statement.month %>"></label>
+  <a class="button quiet" href="<%= url "/income", month: next_month(@statement.month) %>" aria-label="Next month">›</a>
   <button type="submit">Show</button>
 </form>
 

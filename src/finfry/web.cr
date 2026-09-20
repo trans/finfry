@@ -98,10 +98,15 @@ module Finfry
       ).to_s)
     end
 
+    # With no filter at all the page shows the current month (all-time,
+    # oldest-first is the CLI's default, and the right one for a pipe, but a
+    # page wants the recent past); `?all=1` or any explicit filter widens it.
     private def page_register(c : Ctx) : Nil
+      filtered = {"account", "month", "since", "until", "min", "max", "q", "limit", "all"}.any? { |k| c[k]?.presence }
+      month = c["month"]?.presence || (filtered ? nil : current_month)
       view = @app.register(
         account: c["account"]?.presence,
-        month: c["month"]?.presence,
+        month: month,
         since: c["since"]?.presence,
         until_date: c["until"]?.presence,
         min: c["min"]?.presence.try { |m| Money.parse(m) },
@@ -109,12 +114,12 @@ module Finfry
         match: c["q"]?.presence,
         limit: c["limit"]?.presence.try(&.to_i?),
       )
-      c.html render(c, "Register", "register", RegisterPage.new(view, c.params, account_names).to_s)
+      c.html render(c, "Register", "register", RegisterPage.new(view, c.params, account_names, month).to_s)
     end
 
     private def page_balances(c : Ctx) : Nil
       prefix = c["prefix"]?.presence
-      c.html render(c, "Balances", "balances", BalancesPage.new(@app.balances(prefix), prefix).to_s)
+      c.html render(c, "Balances", "balances", BalancesPage.new(@app.balance_tree(prefix), prefix).to_s)
     end
 
     private def page_income(c : Ctx) : Nil
@@ -486,6 +491,29 @@ module Finfry
         Recurrence.names.map { |n| %(<option value="#{n}"#{n == selected ? " selected" : ""}>#{n}</option>) }.join
       end
 
+      def prev_month(month : String) : String
+        shift_month(month, -1)
+      end
+
+      def next_month(month : String) : String
+        shift_month(month, 1)
+      end
+
+      private def shift_month(month : String, by : Int32) : String
+        Time.parse(month, "%Y-%m", Time::Location::UTC).shift(months: by).to_s("%Y-%m")
+      end
+
+      # Spent-of-limit as a ruled bar; red once over.
+      def budget_bar(row : BudgetRow) : String
+        pct = row.limit > 0 ? (row.spent * 100 // row.limit).clamp(0, 100) : 100
+        %(<div class="track#{row.over? ? " over" : ""}" role="img" aria-label="#{pct}% of budget"><div class="fill" style="width:#{pct}%"></div></div>)
+      end
+
+      # Accounts that have statements to reconcile against.
+      def reconcilable?(account : String) : Bool
+        account.starts_with?("Assets") || account.starts_with?("Liabilities")
+      end
+
       # The ledger path for the sidebar: $HOME shortened, and only the tail if
       # it's still long (the full path is in the title attribute).
       def home(path : String) : String
@@ -522,7 +550,14 @@ module Finfry
     class RegisterPage
       include Helpers
 
-      def initialize(@view : RegisterView, @params : HTTP::Params, @accounts : Array(String))
+      def initialize(@view : RegisterView, @params : HTTP::Params, @accounts : Array(String), @month : String?)
+      end
+
+      # The current query with one parameter replaced — for the month arrows.
+      def query_with(name : String, value : String) : String
+        q = @params.dup
+        q[name] = value
+        "/register?#{q}"
       end
 
       def param(name : String) : String
@@ -535,7 +570,7 @@ module Finfry
     class BalancesPage
       include Helpers
 
-      def initialize(@rows : Array({String, Int64}), @prefix : String?)
+      def initialize(@nodes : Array(BalanceNode), @prefix : String?)
       end
 
       ECR.def_to_s "#{__DIR__}/web/balances.ecr"

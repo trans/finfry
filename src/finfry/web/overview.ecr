@@ -49,11 +49,12 @@
 <section class="card">
   <h2>Budgets <span class="muted"><%= @statement.month %></span></h2>
   <table class="ledger">
-    <thead><tr><th>Account</th><th class="num-col">Spent</th><th class="num-col">Limit</th><th class="num-col">Remaining</th></tr></thead>
+    <thead><tr><th>Account</th><th class="bar-col">Used</th><th class="num-col">Spent</th><th class="num-col">Limit</th><th class="num-col">Remaining</th></tr></thead>
     <tbody>
     <% @budgets.each do |b| %>
       <tr<%= b.over? ? %( class="over") : "" %>>
         <td><%= h b.account %></td>
+        <td class="bar-col"><%= budget_bar b %></td>
         <td class="num-col"><%= money b.spent %></td>
         <td class="num-col"><%= money b.limit %></td>
         <td class="num-col"><%= money b.remaining %><% if b.over? %> <span class="flag">over</span><% end %></td>

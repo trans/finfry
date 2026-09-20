@@ -12,13 +12,14 @@
   <p class="empty">No accounts yet.</p>
 <% else %>
   <table class="ledger">
-    <thead><tr><th>Account</th><th>Metadata</th><th class="num-col">Balance</th></tr></thead>
+    <thead><tr><th>Account</th><th>Metadata</th><th class="num-col">Balance</th><th></th></tr></thead>
     <tbody>
     <% @rows.each do |row| %>
       <tr<%= row.used? ? "" : %( class="unused") %>>
         <td><a href="<%= url "/register", account: row.name %>"><%= h row.name %></a><% unless row.used? %> <span class="tag">unused</span><% end %></td>
         <td class="meta"><% row.meta.to_a.sort_by { |(k, _)| k }.each do |(k, v)| %><span class="kv"><%= h k %>=<%= h v %></span> <% end %></td>
         <td class="num-col"><%= money row.balance %></td>
+        <td class="actions"><% if reconcilable?(row.name) && row.used? %><a class="button quiet small" href="<%= url "/reconcile", account: row.name %>">Reconcile</a><% end %></td>
       </tr>
     <% end %>
     </tbody>

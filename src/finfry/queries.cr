@@ -28,6 +28,19 @@ module Finfry
     end
   end
 
+  # One line of a balance tree: an account (or a collapsed chain of
+  # single-child ancestors) with its subtree total.
+  struct BalanceNode
+    getter name : String  # full account path
+    getter label : String # what to print at this depth: the last segment(s)
+    getter depth : Int32
+    getter balance : Int64 # display-signed, rolled up over the subtree
+    getter? leaf : Bool
+
+    def initialize(@name, @label, @depth, @balance, @leaf)
+    end
+  end
+
   # Income statement for one month: per-account lines (largest first) and totals.
   struct IncomeStatement
     getter month : String
@@ -202,6 +215,42 @@ module Finfry
       @store.balances(prefix).to_a
         .sort_by { |(account, _)| account }
         .map { |(account, cents)| {account, display_cents(account, cents)} }
+    end
+
+    # Balances as a tree: each parent with the total of its subtree, children
+    # indented under it, sorted by name. A parent with a single child and no
+    # postings of its own collapses into that child (`Food:Coffee`), the way
+    # ledger tools print charts, so depth only appears where it carries
+    # information.
+    def balance_tree(prefix : String? = nil) : Array(BalanceNode)
+      raw = @store.balances(prefix)
+      totals = Hash(String, Int64).new(0_i64)
+      children = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+      raw.each do |account, cents|
+        parts = account.split(':')
+        (1..parts.size).each do |n|
+          name = parts[0, n].join(':')
+          totals[name] += cents
+          children[parts[0, n - 1].join(':')] << name if n > 1
+        end
+      end
+      children.each_value(&.uniq!)
+      roots = totals.keys.reject(&.includes?(':')).sort
+      nodes = [] of BalanceNode
+      roots.each { |r| walk_balances(r, 0, r, raw, totals, children, nodes) }
+      nodes
+    end
+
+    private def walk_balances(name : String, depth : Int32, label : String, raw : Hash(String, Int64),
+                              totals : Hash(String, Int64), children : Hash(String, Array(String)),
+                              nodes : Array(BalanceNode)) : Nil
+      kids = (children[name]? || [] of String).sort
+      if kids.size == 1 && !raw.has_key?(name)
+        child = kids.first
+        return walk_balances(child, depth, "#{label}:#{child.rpartition(':')[2]}", raw, totals, children, nodes)
+      end
+      nodes << BalanceNode.new(name, label, depth, display_cents(name, totals[name]), kids.empty?)
+      kids.each { |k| walk_balances(k, depth + 1, k.rpartition(':')[2], raw, totals, children, nodes) }
     end
 
     def income_statement(month : String) : IncomeStatement

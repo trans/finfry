@@ -1,13 +1,15 @@
 <header class="page-head">
   <h1>Register</h1>
-  <p class="sub"><% if a = @view.account %>Account view of <strong><%= h a %></strong>, with running balance<% else %>Every transaction, oldest first<% end %></p>
+  <p class="sub"><% if a = @view.account %>Account view of <strong><%= h a %></strong>, with running balance<% else %>Transactions, newest first<% end %>
+    <% if m = @month %> · <span class="month-nav"><a href="<%= query_with "month", prev_month(m) %>" aria-label="Previous month">‹</a> <strong><%= m %></strong> <a href="<%= query_with "month", next_month(m) %>" aria-label="Next month">›</a></span> · <a href="<%= query_with "all", "1" %>">all time</a><% end %>
+  </p>
 </header>
 
 <form class="filters" method="get" action="/register">
   <label>Account
     <input list="accounts" name="account" value="<%= param "account" %>" placeholder="any">
   </label>
-  <label>Month <input type="month" name="month" value="<%= param "month" %>"></label>
+  <label>Month <input type="month" name="month" value="<%= h(@month || "") %>"></label>
   <label>From <input type="date" name="since" value="<%= param "since" %>"></label>
   <label>To <input type="date" name="until" value="<%= param "until" %>"></label>
   <label>Min <input name="min" value="<%= param "min" %>" size="7" inputmode="decimal"></label>
@@ -15,17 +17,17 @@
   <label>Memo <input name="q" value="<%= param "q" %>" placeholder="contains…"></label>
   <label>Last <input name="limit" value="<%= param "limit" %>" size="4" inputmode="numeric"></label>
   <button type="submit">Filter</button>
-  <a class="button quiet" href="/register">Clear</a>
+  <a class="button quiet" href="/register?all=1">All time</a>
 </form>
 <datalist id="accounts"><%= account_options @accounts %></datalist>
 
 <% if @view.empty? %>
-  <p class="empty">No transactions match. <a href="/record">Record an entry</a> or clear the filters.</p>
+  <p class="empty">No transactions match. <a href="/record">Record an entry</a>, or <a href="/register?all=1">show all time</a>.</p>
 <% elsif account = @view.account %>
   <table class="ledger">
     <thead><tr><th>#</th><th>Date</th><th>Memo</th><th class="num-col">Amount</th><th class="num-col running">Balance</th></tr></thead>
     <tbody>
-    <% @view.rows.each do |row| t = row.txn %>
+    <% @view.rows.reverse_each do |row| t = row.txn %>
       <tr>
         <td class="id"><%= t.id %></td>
         <td class="date"><%= t.date %></td>
@@ -40,7 +42,7 @@
   <table class="ledger">
     <thead><tr><th>#</th><th>Date</th><th>Memo</th><th>Postings</th><th class="num-col">Amount</th></tr></thead>
     <tbody>
-    <% @view.rows.each do |row| t = row.txn %>
+    <% @view.rows.reverse_each do |row| t = row.txn %>
       <tr>
         <td class="id"><%= t.id %></td>
         <td class="date"><%= t.date %></td>

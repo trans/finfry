@@ -4,8 +4,10 @@
 </header>
 
 <div class="filters-row">
-  <form class="filters" method="get" action="/budgets">
+  <form class="filters month-form" method="get" action="/budgets">
+    <a class="button quiet" href="<%= url "/budgets", month: prev_month(@month) %>" aria-label="Previous month">‹</a>
     <label>Month <input type="month" name="month" value="<%= @month %>"></label>
+    <a class="button quiet" href="<%= url "/budgets", month: next_month(@month) %>" aria-label="Next month">›</a>
     <button type="submit">Show</button>
   </form>
   <form class="inline" method="post" action="/budgets/set">
@@ -20,11 +22,12 @@
   <p class="empty">No budgets set. Set one above to track spending against a monthly limit.</p>
 <% else %>
   <table class="ledger">
-    <thead><tr><th>Account</th><th class="num-col">Spent</th><th class="num-col">Limit</th><th class="num-col running">Remaining</th><th></th></tr></thead>
+    <thead><tr><th>Account</th><th class="bar-col">Used</th><th class="num-col">Spent</th><th class="num-col">Limit</th><th class="num-col running">Remaining</th><th></th></tr></thead>
     <tbody>
     <% @rows.each do |b| %>
       <tr<%= b.over? ? %( class="over") : "" %>>
         <td><a href="<%= url "/register", account: b.account, month: @month %>"><%= h b.account %></a></td>
+        <td class="bar-col"><%= budget_bar b %></td>
         <td class="num-col"><%= money b.spent %></td>
         <td class="num-col"><%= money b.limit %></td>
         <td class="num-col running"><%= money b.remaining %><% if b.over? %> <span class="flag">over</span><% end %></td>

@@ -1,6 +1,6 @@
 <header class="page-head">
   <h1>Balances</h1>
-  <p class="sub">Net balance of every account<% if p = @prefix %> under <strong><%= h p %></strong><% end %></p>
+  <p class="sub">Net balance of every account<% if p = @prefix %> under <strong><%= h p %></strong><% end %>, with subtotals up the tree</p>
 </header>
 
 <form class="filters" method="get" action="/balances">
@@ -9,16 +9,17 @@
   <a class="button quiet" href="/balances">Clear</a>
 </form>
 
-<% if @rows.empty? %>
+<% if @nodes.empty? %>
   <p class="empty">No balances to show.</p>
 <% else %>
-  <table class="ledger">
-    <thead><tr><th>Account</th><th class="num-col">Balance</th></tr></thead>
+  <table class="ledger tree">
+    <thead><tr><th>Account</th><th class="num-col">Balance</th><th></th></tr></thead>
     <tbody>
-    <% @rows.each do |(account, cents)| %>
-      <tr>
-        <td><a href="<%= url "/register", account: account %>"><%= h account %></a></td>
-        <td class="num-col"><%= money cents %></td>
+    <% @nodes.each do |n| %>
+      <tr class="depth-<%= n.depth %><%= n.leaf? ? "" : " parent" %>">
+        <td><a href="<%= url "/register", account: n.name %>" title="<%= h n.name %>"><%= h n.label %></a></td>
+        <td class="num-col"><%= money n.balance %></td>
+        <td class="actions"><% if n.leaf? && reconcilable?(n.name) %><a class="button quiet small" href="<%= url "/reconcile", account: n.name %>">Reconcile</a><% end %></td>
       </tr>
     <% end %>
     </tbody>

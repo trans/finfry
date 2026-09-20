@@ -10,7 +10,7 @@
       <%= account_options @accounts, @view.try(&.account) %>
     </select>
   </label>
-  <label>Statement balance <input name="statement" value="<%= h(@statement || "") %>" size="10" inputmode="decimal" placeholder="optional"></label>
+  <label>Statement balance <input name="statement" value="<%= h(@statement || "") %>" size="10" inputmode="decimal" placeholder="from the statement"></label>
   <button type="submit">Open</button>
 </form>
 
@@ -60,9 +60,14 @@
 
     <form method="post" action="/reconcile/commit" class="bar commit">
       <input type="hidden" name="account" value="<%= h v.account %>">
-      <label>Statement balance <input name="statement" value="<%= h(@statement || "") %>" size="10" inputmode="decimal" required></label>
-      <label class="checkbox"><input type="checkbox" name="adjust" value="1"> Book a small residual to Expenses:ShortsAndOverages</label>
-      <button type="submit" class="primary">Commit reconciliation</button>
+      <% if st = @statement %>
+        <input type="hidden" name="statement" value="<%= h st %>">
+        <span>Commit to the statement balance of <strong class="num"><%= Money.format(v.statement.not_nil!) %></strong></span>
+        <label class="checkbox"><input type="checkbox" name="adjust" value="1"> Book a small residual to Expenses:ShortsAndOverages</label>
+        <button type="submit" class="primary">Commit reconciliation</button>
+      <% else %>
+        <span class="muted">Enter the statement balance above to check the cleared balance against it and commit.</span>
+      <% end %>
     </form>
     <p class="hint">Commit locks the cleared transactions in — only if the cleared balance equals the statement. A real, explainable difference (a fee, a forgotten bill) should be recorded to its proper account instead of adjusted away.</p>
   <% end %>

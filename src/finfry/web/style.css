@@ -181,7 +181,6 @@ table.ledger { width: 100%; border-collapse: collapse; margin-top: 4px; }
 .ledger tr.total th, .ledger tr.total td { border-top: 1px solid var(--rule-strong); border-bottom: 3px double var(--rule-strong); font-weight: 600; }
 .ledger tr.subtotal th, .ledger tr.subtotal td { border-top: 1px solid var(--rule-strong); font-weight: 600; }
 .ledger tr.section th { font-family: var(--serif); font-weight: 500; font-size: 1.05rem; padding-top: 16px; border-bottom: 1px solid var(--rule-strong); }
-.ledger tr.over td { color: var(--red); }
 .ledger tr.unused td { color: var(--ink-2); }
 .ledger tr.cleared td { background: color-mix(in srgb, var(--ok) 10%, transparent); }
 .ledger .actions { text-align: right; white-space: nowrap; }
@@ -290,3 +289,22 @@ html.js .nojs-only { display: none; }
 .flash { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .flash pre { flex: 1; }
 .flash-undo { flex: none; }
+
+/* --- tree balances, month nav, budget bars ------------------------------- */
+
+.ledger.tree tr.parent td:first-child { font-weight: 600; }
+.ledger.tree tr.parent td { border-bottom-color: var(--rule-strong); }
+.ledger.tree tr.depth-1 td:first-child { padding-left: 28px; }
+.ledger.tree tr.depth-2 td:first-child { padding-left: 46px; }
+.ledger.tree tr.depth-3 td:first-child { padding-left: 64px; }
+.ledger.tree tr.depth-4 td:first-child { padding-left: 82px; }
+.ledger.tree tr.depth-0 td { border-top: 1px solid var(--rule-strong); }
+.ledger.tree .actions { width: 7em; }
+
+.month-nav a { font-size: 1.1em; padding: 0 4px; }
+.month-form .button { padding: 5px 9px; font-size: 1.1em; line-height: 1.2; }
+
+.bar-col { width: 120px; }
+.track { height: 6px; background: var(--paper-3); border-radius: 3px; overflow: hidden; margin-top: 7px; border: 1px solid var(--rule); }
+.track .fill { height: 100%; background: var(--pen); }
+.track.over .fill { background: var(--red); }
