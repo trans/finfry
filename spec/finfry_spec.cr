@@ -959,10 +959,10 @@ describe Finfry::Web do
     with_store do |store|
       store.declare_account("Expenses:Food")
       web = Finfry::Web.new(store)
-      status, headers, _ = web_request(web, "POST", "/record/spend",
-        "amount=12.50&account=Expenses:Food&from=Assets:Checking&memo=Lunch&date=2026-06-05&recurrence=")
+      status, headers, _ = web_request(web, "POST", "/record",
+        "amount=12.50&to=Expenses:Food&from=Assets:Checking&memo=Lunch&date=2026-06-05&recurrence=")
       status.should eq(303)
-      headers["Location"].should eq("/register")
+      headers["Location"].should eq("/record")
       cookie = headers["Set-Cookie"]
       cookie.should contain("finfry_flash=")
 
@@ -974,14 +974,15 @@ describe Finfry::Web do
       status, headers, body = web_request(web, "GET", "/register", headers: HTTP::Headers{"Cookie" => "finfry_flash=#{value}"})
       status.should eq(200)
       body.should contain("Recorded #1")
+      body.should contain(%(name="expect" value="1")) # the note offers Undo for this change
       headers["Set-Cookie"].should contain("expires=")
     end
   end
 
   it "surfaces a command error as an error note instead of a 500" do
     with_store do |store|
-      _, headers, _ = web_request(Finfry::Web.new(store), "POST", "/record/spend", "amount=abc&account=Expenses:Food")
-      URI.decode_www_form(headers["Set-Cookie"]).should contain("error:invalid amount")
+      _, headers, _ = web_request(Finfry::Web.new(store), "POST", "/record", "amount=abc&to=Expenses:Food&from=Assets:Checking")
+      URI.decode_www_form(headers["Set-Cookie"]).should contain("error::invalid amount")
     end
   end
 
@@ -1013,6 +1014,53 @@ describe Finfry::Web do
       status.should eq(200)
       JSON.parse(body)["staged"].as_i.should eq(2)
       store.due_entries.map(&.status).sort.should eq(["ok", "skip"])
+    end
+  end
+
+  it "infers the entry kind from the accounts, so any pair works" do
+    with_store do |store|
+      store.set_account_policy("off")
+      web = Finfry::Web.new(store)
+      web_request(web, "POST", "/record", "amount=3000&to=Assets:Checking&from=Income:Salary")
+      web_request(web, "POST", "/record", "amount=500&to=Liabilities:Card&from=Assets:Checking") # card payment
+      web_request(web, "POST", "/record", "amount=20&to=Assets:Checking&from=Expenses:Food")     # refund
+      t1, t2, t3 = store.transactions
+      t1.postings.find { |p| p.account == "Income:Salary" }.not_nil!.amount.should eq(-300000_i64)
+      t2.postings.find { |p| p.account == "Liabilities:Card" }.not_nil!.amount.should eq(50000_i64)
+      t3.postings.find { |p| p.account == "Expenses:Food" }.not_nil!.amount.should eq(-2000_i64)
+      store.transactions.all?(&.balanced?).should be_true
+      store.changesets.map(&.summary).first.should contain("$3,000.00") # went through `earn`
+    end
+  end
+
+  it "recalls the last entry under a memo and fills the form from it" do
+    with_store do |store|
+      store.record("2026-06-01", "Netflix", expense("Expenses:Subscriptions", 1549), "monthly")
+      store.record("2026-06-05", "netflix", expense("Expenses:Subscriptions", 1699), "monthly")
+      _, _, body = web_request(Finfry::Web.new(store), "GET", "/api/recall?memo=NETFLIX")
+      json = JSON.parse(body)
+      json["amount"].as_s.should eq("16.99") # the most recent
+      json["to"].as_s.should eq("Expenses:Subscriptions")
+      json["from"].as_s.should eq("Assets:Checking")
+      json["recurrence"].as_s.should eq("monthly")
+      _, _, body = web_request(Finfry::Web.new(store), "GET", "/api/recall?memo=nothing")
+      body.should eq("{}")
+    end
+  end
+
+  it "the note's Undo only pops the change it was about" do
+    with_store do |store|
+      web = Finfry::Web.new(store)
+      web_request(web, "POST", "/record", "amount=5&to=Expenses:Food&from=Assets:Checking")
+      # something else lands in between (say, from the CLI)
+      store.changeset("meanwhile", "2026-06-05 10:00") { store.record("2026-06-05", "meanwhile", expense("Expenses:Food", 100)) }
+      _, headers, _ = web_request(web, "POST", "/undo", "expect=1", HTTP::Headers{"Referer" => "/record"})
+      URI.decode_www_form(headers["Set-Cookie"]).should contain("error:")
+      store.transactions.size.should eq(2) # nothing undone
+
+      _, headers, _ = web_request(web, "POST", "/undo", "expect=2")
+      store.transactions.size.should eq(1)                                  # the latest, as expected, popped
+      URI.decode_www_form(headers["Set-Cookie"]).should contain("notice::") # and the "Undid" note offers no Undo of its own
     end
   end
 

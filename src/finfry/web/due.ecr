@@ -42,6 +42,11 @@
     </div>
   </form>
   <% @entries.each do |e| %><form id="edit-<%= e.id %>" method="post" action="/due/edit"><input type="hidden" name="id" value="<%= e.id %>"></form><% end %>
+  <form method="post" action="/due/stage" class="bar">
+    <% @entries.each do |e| %><input type="hidden" name="status-<%= e.id %>" value="ok"><% end %>
+    <button type="submit" class="quiet">Ok all</button>
+    <span class="muted">Stage every entry to post; you can still change any one.</span>
+  </form>
   <form method="post" action="/due/post" class="bar">
     <button type="submit" class="primary">Post staged decisions</button>
     <span class="muted">Posts every ok'd entry as a normal, undoable transaction and drops the skipped ones. Pending entries stay for next time.</span>

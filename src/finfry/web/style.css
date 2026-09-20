@@ -280,3 +280,13 @@ html.js .nojs-only { display: none; }
   .saved { animation: fade 1.6s ease-out forwards; }
   @keyframes fade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
 }
+
+/* --- record form ---------------------------------------------------------- */
+
+.entry .wide { grid-column: 1 / -1; }
+.field-note { font-size: .75rem; color: var(--ink-2); }
+.entry .kind { margin: 0; min-height: 1.4em; font-family: var(--serif); font-style: italic; color: var(--ink-2); }
+.entry .kind:empty::before { content: "Fill in the accounts and this line says what the entry will be."; opacity: .7; }
+.flash { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.flash pre { flex: 1; }
+.flash-undo { flex: none; }

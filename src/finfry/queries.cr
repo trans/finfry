@@ -273,6 +273,63 @@ module Finfry
       ReconcileView.new(account, cleared, ledger, @store.last_reconciliation(account), rows, statement)
     end
 
+    # --- habits: what the book already knows, for smarter defaults -------
+
+    # Known accounts, most recently used first; never-used ones last,
+    # alphabetically. Ordering only — every account is always offered.
+    def accounts_by_recency : Array(String)
+      last_used = {} of String => String
+      @store.transactions.each do |t|
+        t.postings.each { |p| last_used[p.account] = t.date if (last_used[p.account]? || "") < t.date }
+      end
+      @store.known_accounts.sort { |a, b| compare_recency(a, b, last_used) }
+    end
+
+    # The funding account you used last (the credit leg of the most recent
+    # transaction that has an asset/liability one), else the default.
+    def usual_funding_account : String
+      @store.transactions.sort_by { |t| {t.date, t.id} }.reverse_each do |t|
+        if p = t.postings.find { |p| p.amount < 0 && funding?(p.account) }
+          return p.account
+        end
+      end
+      DEFAULT_ASSET_ACCOUNT
+    end
+
+    # The most recent transaction recorded under this memo (case-insensitive;
+    # exact match first, then prefix), so a repeat entry can start from it.
+    def recall(memo : String) : Transaction?
+      needle = memo.strip.downcase
+      return nil if needle.empty?
+      ordered = @store.transactions.sort_by { |t| {t.date, t.id} }.reverse
+      ordered.find { |t| t.description.downcase == needle } ||
+        ordered.find { |t| t.description.downcase.starts_with?(needle) }
+    end
+
+    # Distinct memos, most recent first.
+    def recent_memos(limit : Int32 = 60) : Array(String)
+      seen = Set(String).new
+      out = [] of String
+      @store.transactions.sort_by { |t| {t.date, t.id} }.reverse_each do |t|
+        next if t.description.empty? || !seen.add?(t.description.downcase)
+        out << t.description
+        break if out.size >= limit
+      end
+      out
+    end
+
+    private def funding?(account : String) : Bool
+      account.starts_with?("Assets") || account.starts_with?("Liabilities")
+    end
+
+    private def compare_recency(a : String, b : String, last_used : Hash(String, String)) : Int32
+      la, lb = last_used[a]?, last_used[b]?
+      return a <=> b if la.nil? && lb.nil?
+      return 1 if la.nil?
+      return -1 if lb.nil?
+      (lb <=> la).zero? ? a <=> b : lb <=> la
+    end
+
     # Human label for a recurring rule / due entry (memo, or the accounts, plus amount).
     def label(rule : RecurringRule) : String
       return "#{rule.description} (computed)" if rule.kind == "interest"

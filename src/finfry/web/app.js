@@ -75,3 +75,50 @@ function note(el, text) {
   el.parentElement.appendChild(s);
   setTimeout(() => s.remove(), 1800);
 }
+
+// The record form: a memo you've used before fills in the blanks from its
+// last entry (never overwriting what you typed), and a line under the fields
+// says what the entry will be — inferred from the accounts, exactly as the
+// server infers it.
+const record = document.querySelector("form[data-record]");
+if (record) {
+  const field = (name) => record.querySelector(`[name=${name}]`);
+  const kindLine = record.querySelector("[data-kind]");
+  const submit = record.querySelector("[data-submit]");
+
+  function describe() {
+    const to = field("to").value.trim(), from = field("from").value.trim();
+    const amount = field("amount").value.trim();
+    let kind = "", verb = "Record";
+    if (!to || !from) { kindLine.textContent = ""; submit.textContent = verb; return; }
+    if (to.startsWith("Expenses")) { kind = "Expense"; verb = "Record expense"; }
+    else if (from.startsWith("Income")) { kind = "Income"; verb = "Record income"; }
+    else { kind = "Transfer"; verb = "Record transfer"; }
+    const money = amount ? ` of $${amount.replace(/^\$/, "")}` : "";
+    kindLine.textContent = `${kind}${money} from ${from} to ${to}`;
+    submit.textContent = verb;
+  }
+
+  let recalled = null;
+  async function recall() {
+    const memo = field("memo").value.trim();
+    if (!memo || memo.toLowerCase() === recalled) return;
+    recalled = memo.toLowerCase();
+    try {
+      const res = await fetch(`/api/recall?memo=${encodeURIComponent(memo)}`, { headers: { Accept: "application/json" } });
+      const data = await res.json();
+      if (!data.to) return;
+      for (const name of ["amount", "to", "from", "recurrence"]) {
+        const el = field(name);
+        const untouched = !el.value || el.dataset.filled === el.value || (name === "from" && el.value === el.defaultValue);
+        if (untouched && data[name]) { el.value = data[name]; el.dataset.filled = data[name]; }
+      }
+      describe();
+    } catch (_) { /* recall is a convenience; the form works without it */ }
+  }
+
+  field("memo").addEventListener("change", recall);
+  field("memo").addEventListener("blur", recall);
+  ["to", "from", "amount"].forEach((n) => field(n).addEventListener("input", describe));
+  describe();
+}

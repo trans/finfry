@@ -68,11 +68,10 @@ module Finfry
       when {"GET", "/reconcile"}         then page_reconcile(c)
       when {"GET", "/history"}           then page_history(c)
       when {"GET", "/record"}            then page_record(c)
+      when {"GET", "/api/recall"}        then api_recall(c)
       when {"GET", "/static/style.css"}  then c.asset("text/css", STYLE)
       when {"GET", "/static/app.js"}     then c.asset("text/javascript", SCRIPT)
-      when {"POST", "/record/spend"}     then perform(c, "spend", args(c, "amount", "account", "from", "memo", "date", "recurrence"), "/register")
-      when {"POST", "/record/earn"}      then perform(c, "earn", args(c, "amount", "account", "to", "memo", "date", "recurrence"), "/register")
-      when {"POST", "/record/transfer"}  then perform(c, "transfer", args(c, "amount", "from", "to", "memo", "date"), "/register")
+      when {"POST", "/record"}           then post_record(c)
       when {"POST", "/accounts/add"}     then perform(c, "accounts add", {"names" => list(c["names"].split)}, "/accounts")
       when {"POST", "/budgets/set"}      then perform(c, "budget set", args(c, "account", "amount"), "/budgets")
       when {"POST", "/budgets/rm"}       then perform(c, "budget rm", args(c, "account"), "/budgets")
@@ -82,7 +81,7 @@ module Finfry
       when {"POST", "/due/post"}         then perform(c, "due post", {} of String => JSON::Any, "/due")
       when {"POST", "/reconcile/mark"}   then post_reconcile_mark(c)
       when {"POST", "/reconcile/commit"} then post_reconcile_commit(c)
-      when {"POST", "/undo"}             then perform(c, "undo", args(c, "id").tap { |a| a["id"] = JSON::Any.new(c["id"].to_i64) if c["id"]?.presence }, "/history")
+      when {"POST", "/undo"}             then post_undo(c)
       when {"POST", "/redo"}             then perform(c, "redo", {} of String => JSON::Any, "/history")
       else
         c.not_found
@@ -162,10 +161,71 @@ module Finfry
     end
 
     private def page_record(c : Ctx) : Nil
-      c.html render(c, "Record", "record", RecordPage.new(account_names, today, c["kind"]?.presence || "spend").to_s)
+      c.html render(c, "Record", "record", RecordPage.new(
+        @app.accounts_by_recency, @app.usual_funding_account, @app.recent_memos, today
+      ).to_s)
+    end
+
+    # Memo recall for the record form: the last entry under this memo, as the
+    # fields the form would need. The page only uses it to fill blanks.
+    private def api_recall(c : Ctx) : Nil
+      txn = @app.recall(c["memo"]? || "")
+      return c.json({} of String => String) unless txn
+      to = txn.postings.find { |p| p.amount > 0 }
+      from = txn.postings.find { |p| p.amount < 0 }
+      c.json({
+        "memo"       => txn.description,
+        "amount"     => Money.format(txn.postings.max_of(&.amount.abs)).lchop('$'),
+        "to"         => to.try(&.account),
+        "from"       => from.try(&.account),
+        "recurrence" => txn.recurrence,
+        "date"       => txn.date,
+      })
     end
 
     # --- writes ---------------------------------------------------------
+
+    # One form for every two-legged entry: money moves *from* one account *to*
+    # another, so direction is always explicit and any pair of accounts works
+    # (a refund, a card payment, a reclassification). The kind is only
+    # inferred to pick the matching CLI command, so the note and the history
+    # read the same as they would from the command line.
+    private def post_record(c : Ctx) : Nil
+      to = c["to"].strip
+      from = c["from"].strip
+      a = args(c, "amount", "memo", "date", "recurrence")
+      if to.starts_with?("Expenses")
+        a["account"] = JSON::Any.new(to)
+        a["from"] = JSON::Any.new(from)
+        perform(c, "spend", a, "/record")
+      elsif from.starts_with?("Income")
+        a["account"] = JSON::Any.new(from)
+        a["to"] = JSON::Any.new(to)
+        perform(c, "earn", a, "/record")
+      else
+        a.delete("recurrence") # transfer has no cadence flag
+        a["from"] = JSON::Any.new(from)
+        a["to"] = JSON::Any.new(to)
+        perform(c, "transfer", a, "/record")
+      end
+    end
+
+    # Undo. From the History page `id` reverses an older change (a correcting
+    # entry). From a note's Undo button `expect` names the change the note was
+    # about: it's only popped if it is still the latest, so an entry made
+    # meanwhile (from the CLI, say) can never be undone by mistake.
+    private def post_undo(c : Ctx) : Nil
+      if expect = c["expect"]?.presence
+        latest = @store.changesets.last?.try(&.id)
+        unless latest.to_s == expect
+          return c.finish(true, "Something else was recorded since — undo it from History instead.", c.referer)
+        end
+        return perform(c, "undo", {} of String => JSON::Any, c.referer)
+      end
+      a = {} of String => JSON::Any
+      a["id"] = JSON::Any.new(c["id"].to_i64) if c["id"]?.presence
+      perform(c, "undo", a, "/history")
+    end
 
     # Decisions arrive as `status-<id>=pending|ok|skip`, one per row (the whole
     # table without JS, a single row with it). Group them into the CLI's own
@@ -235,9 +295,16 @@ module Finfry
 
     # Run a command and answer: JSON for fetch callers, else a redirect that
     # carries the command's output (or error) as the next page's note.
+    # When the command journaled a new change, the note offers to undo it —
+    # except for a reconcile commit, whose adjustment entry is locked under the
+    # reconciliation it just finalized.
     private def perform(c : Ctx, subcommand : String, arguments : Hash(String, JSON::Any), back : String) : Nil
+      before = @store.changesets.last?.try(&.id)
       output, error = @app.execute(subcommand, JSON::Any.new(arguments))
-      c.finish(error, output, back)
+      after = @store.changesets.last?.try(&.id)
+      created = after && (before.nil? || after > before) # a new change, not one popped by undo
+      undo = !error && created && subcommand != "reconcile" ? after : nil
+      c.finish(error, output, back, undo: undo)
     end
 
     # --- helpers --------------------------------------------------------
@@ -278,7 +345,11 @@ module Finfry
     # content negotiation for the JS callers.
     class Ctx
       getter params : HTTP::Params
-      getter flash : {String, String}? # {kind, text}
+      getter flash : Flash?
+
+      # A note carried across one redirect: what happened, and — when the
+      # change can be popped — which changeset the Undo button should expect.
+      record Flash, kind : String, text : String, undo : Int32? = nil
 
       def initialize(@ctx : HTTP::Server::Context)
         @params = @ctx.request.query_params.dup
@@ -346,7 +417,7 @@ module Finfry
 
       # Answer a completed write: JSON (with any extra fields) for fetch
       # callers, otherwise redirect and carry the message as a note.
-      def finish(error : Bool, message : String, back : String, extra = nil) : Nil
+      def finish(error : Bool, message : String, back : String, extra = nil, undo : Int32? = nil) : Nil
         if wants_json?
           payload = {"ok" => !error, "message" => message}
           @ctx.response.status = HTTP::Status::UNPROCESSABLE_ENTITY if error
@@ -354,28 +425,29 @@ module Finfry
         elsif error
           redirect(back, error: message)
         else
-          redirect(back, notice: message)
+          redirect(back, notice: message, undo: undo)
         end
       end
 
-      def redirect(to : String, notice : String? = nil, error : String? = nil) : Nil
+      def redirect(to : String, notice : String? = nil, error : String? = nil, undo : Int32? = nil) : Nil
         res = @ctx.response
         if text = error || notice
           kind = error ? "error" : "notice"
           # Cookies are small; the note is a summary, not a transcript.
           text = "#{text[0, 900]}…" if text.size > 900
-          res.cookies << HTTP::Cookie.new(FLASH_COOKIE, URI.encode_www_form("#{kind}:#{text}"), path: "/", http_only: true)
+          value = URI.encode_www_form("#{kind}:#{undo}:#{text}")
+          res.cookies << HTTP::Cookie.new(FLASH_COOKIE, value, path: "/", http_only: true)
         end
         res.status = HTTP::Status::SEE_OTHER
         res.headers["Location"] = to
       end
 
-      private def read_flash : {String, String}?
+      private def read_flash : Flash?
         raw = @ctx.request.cookies[FLASH_COOKIE]?.try(&.value)
         return nil unless raw
-        decoded = URI.decode_www_form(raw)
-        kind, _, text = decoded.partition(':')
-        {kind, text}
+        kind, _, rest = URI.decode_www_form(raw).partition(':')
+        undo, _, text = rest.partition(':')
+        Flash.new(kind, text, undo.to_i?)
       end
 
       private def clear_flash : Nil
@@ -427,7 +499,7 @@ module Finfry
       include Helpers
 
       def initialize(@title : String, @active : String, @body : String, @book : String,
-                     @due_count : Int32, @flash : {String, String}?)
+                     @due_count : Int32, @flash : Ctx::Flash?)
       end
 
       def nav(name : String) : String
@@ -557,11 +629,20 @@ module Finfry
     class RecordPage
       include Helpers
 
-      def initialize(@accounts : Array(String), @today : String, @kind : String)
+      def initialize(@accounts : Array(String), @funding : String, @memos : Array(String), @today : String)
       end
 
-      def tab(kind : String) : String
-        kind == @kind ? %( aria-current="page") : ""
+      # Suggestions for the "to" field: what money is *for* first (expenses,
+      # income), then everything else — all of it, in recency order.
+      def to_accounts : Array(String)
+        category, other = @accounts.partition { |a| a.starts_with?("Expenses") || a.starts_with?("Income") }
+        category + other
+      end
+
+      # Suggestions for the "from" field: where money is *held* first.
+      def from_accounts : Array(String)
+        holding, other = @accounts.partition { |a| a.starts_with?("Assets") || a.starts_with?("Liabilities") }
+        holding + other
       end
 
       ECR.def_to_s "#{__DIR__}/web/record.ecr"

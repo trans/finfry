@@ -268,7 +268,14 @@ finfry serve -p 8080 -o # another port, and open it in your browser
 
 It is a plain multi-page app: pages are rendered server-side, forms POST and
 redirect, and a few lines of JavaScript let the due and reconcile pages save a
-toggle without a reload (everything still works with JS off). Every write goes
+toggle without a reload (everything still works with JS off). Conventions set
+the defaults, never the limits: there is one **Record** form — money moves
+*from* one account *to* another, and the kind (expense, income, transfer) is
+inferred from the accounts, so any pair works (a card payment, a refund, a
+reclassification). A memo you've used before fills in the blanks from its last
+entry (never what you've typed), account suggestions are ordered by how
+recently you used them, and every note about a change you just made carries an
+**Undo** — which only fires if that change is still the latest. Every write goes
 through the same command path as the CLI, so the account policy, the balance
 guards and the undo journal apply exactly as on the command line — the
 command's own output shows as a note on the next page. Unknown accounts under
