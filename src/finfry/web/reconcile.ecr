@@ -1,0 +1,83 @@
+<header class="page-head">
+  <h1>Reconcile</h1>
+  <p class="sub">Prove the ledger agrees with a bank or card statement. Clear what appears on the statement; commit once the cleared balance matches.</p>
+</header>
+
+<form class="filters" method="get" action="/reconcile">
+  <label>Account
+    <select name="account" required>
+      <option value="">Choose an account…</option>
+      <%= account_options @accounts, @view.try(&.account) %>
+    </select>
+  </label>
+  <label>Statement balance <input name="statement" value="<%= h(@statement || "") %>" size="10" inputmode="decimal" placeholder="optional"></label>
+  <button type="submit">Open</button>
+</form>
+
+<% if v = @view %>
+  <section class="recon-summary">
+    <div class="stat"><span class="label">Cleared balance</span><span class="figure" data-field="cleared"><%= money v.cleared %></span><span class="note">reconciled + staged</span></div>
+    <div class="stat"><span class="label">Ledger balance</span><span class="figure" data-field="ledger"><%= money v.ledger %></span><span class="note">everything recorded</span></div>
+    <% if last = v.last %>
+      <div class="stat"><span class="label">Last reconciled</span><span class="figure"><%= money last.statement %></span><span class="note">on <%= last.date %></span></div>
+    <% end %>
+    <% if st = v.statement %>
+      <div class="stat verdict" data-field="verdict" data-matches="<%= v.matches? %>">
+        <span class="label">Statement</span><span class="figure"><%= money st %></span>
+        <span class="note"><% if v.matches? %><span class="tick">✓</span> matches the cleared balance<% else %><span class="warn">⚠</span> off by <span data-field="difference"><%= money v.difference.not_nil! %></span><% end %></span>
+      </div>
+    <% end %>
+  </section>
+
+  <% if v.rows.empty? %>
+    <p class="empty">Nothing to reconcile — every transaction on <%= h v.account %> is already committed.</p>
+  <% else %>
+    <form method="post" action="/reconcile/mark" data-autosave>
+      <input type="hidden" name="account" value="<%= h v.account %>" data-ctx>
+      <% if @statement %><input type="hidden" name="statement" value="<%= h @statement %>" data-ctx><% end %>
+      <table class="ledger">
+        <thead><tr><th class="check-col">Cleared</th><th>#</th><th>Date</th><th>Memo</th><th class="num-col">Amount</th></tr></thead>
+        <tbody>
+        <% v.rows.each do |row| t = row.txn %>
+          <tr class="<%= row.cleared? ? "cleared" : "" %>">
+            <td class="check-col">
+              <input type="hidden" name="ids" value="<%= t.id %>">
+              <input type="checkbox" name="clear" value="<%= t.id %>" aria-label="Cleared #<%= t.id %>"<%= row.cleared? ? " checked" : "" %>>
+            </td>
+            <td class="id"><%= t.id %></td>
+            <td class="date"><%= t.date %></td>
+            <td><%= h t.description %></td>
+            <td class="num-col"><%= money row.amount %></td>
+          </tr>
+        <% end %>
+        </tbody>
+      </table>
+      <div class="bar">
+        <button type="submit" class="nojs-only">Save cleared</button>
+        <span class="muted"><span data-field="staged"><%= v.staged_count %></span> of <%= v.rows.size %> cleared</span>
+      </div>
+    </form>
+
+    <form method="post" action="/reconcile/commit" class="bar commit">
+      <input type="hidden" name="account" value="<%= h v.account %>">
+      <label>Statement balance <input name="statement" value="<%= h(@statement || "") %>" size="10" inputmode="decimal" required></label>
+      <label class="checkbox"><input type="checkbox" name="adjust" value="1"> Book a small residual to Expenses:ShortsAndOverages</label>
+      <button type="submit" class="primary">Commit reconciliation</button>
+    </form>
+    <p class="hint">Commit locks the cleared transactions in — only if the cleared balance equals the statement. A real, explainable difference (a fee, a forgotten bill) should be recorded to its proper account instead of adjusted away.</p>
+  <% end %>
+
+  <% unless @past.empty? %>
+  <section class="card">
+    <h2>Past reconciliations</h2>
+    <table class="ledger compact">
+      <thead><tr><th>Date</th><th class="num-col">Statement</th><th class="num-col">Locked</th></tr></thead>
+      <tbody>
+      <% @past.reverse.each do |rec| %>
+        <tr><td class="date"><%= rec.date %></td><td class="num-col"><%= money rec.statement %></td><td class="num-col"><%= rec.transaction_ids.size %></td></tr>
+      <% end %>
+      </tbody>
+    </table>
+  </section>
+  <% end %>
+<% end %>

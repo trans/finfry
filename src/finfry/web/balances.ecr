@@ -1,0 +1,26 @@
+<header class="page-head">
+  <h1>Balances</h1>
+  <p class="sub">Net balance of every account<% if p = @prefix %> under <strong><%= h p %></strong><% end %></p>
+</header>
+
+<form class="filters" method="get" action="/balances">
+  <label>Subtree <input name="prefix" value="<%= h(@prefix || "") %>" placeholder="e.g. Assets"></label>
+  <button type="submit">Filter</button>
+  <a class="button quiet" href="/balances">Clear</a>
+</form>
+
+<% if @rows.empty? %>
+  <p class="empty">No balances to show.</p>
+<% else %>
+  <table class="ledger">
+    <thead><tr><th>Account</th><th class="num-col">Balance</th></tr></thead>
+    <tbody>
+    <% @rows.each do |(account, cents)| %>
+      <tr>
+        <td><a href="<%= url "/register", account: account %>"><%= h account %></a></td>
+        <td class="num-col"><%= money cents %></td>
+      </tr>
+    <% end %>
+    </tbody>
+  </table>
+<% end %>

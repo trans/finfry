@@ -19,6 +19,10 @@ release:
 test:
     crystal spec
 
+# Build and open the web UI on the current book.
+serve: build
+    ./bin/finfry serve --open
+
 # Format sources.
 format:
     crystal tool format src/ spec/

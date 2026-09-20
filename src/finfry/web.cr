@@ -1,0 +1,570 @@
+require "http/server"
+require "ecr"
+require "html"
+require "uri"
+require "./app"
+require "./queries"
+
+module Finfry
+  # The web UI: a small multi-page app over the same `App`/`Store` the CLI
+  # uses. Pages are server-rendered (ECR) from the query layer; every write is
+  # a form POST that runs the matching command through `App#execute` — so the
+  # account policy, balance guards and undo journal apply exactly as on the
+  # command line — then redirects with the command's own output as a note. A
+  # few lines of JS let the due and reconcile pages save a toggle without a
+  # round trip, but every action works with JS off.
+  #
+  # Local-only by design: it binds 127.0.0.1 and has no authentication.
+  class Web
+    DEFAULT_HOST = "127.0.0.1"
+    DEFAULT_PORT = 4747
+
+    # Assets are baked into the binary so `finfry serve` stays self-contained.
+    STYLE  = {{ read_file("#{__DIR__}/web/style.css") }}
+    SCRIPT = {{ read_file("#{__DIR__}/web/app.js") }}
+
+    FLASH_COOKIE = "finfry_flash"
+
+    def initialize(@store : Store, @host : String = DEFAULT_HOST, @port : Int32 = DEFAULT_PORT)
+      # Commands run non-interactively; their output is captured per request.
+      @app = App.new(@store, out: STDERR, interactive: false)
+    end
+
+    # Serve until interrupted. Yields the URL once bound, before listening.
+    def run(& : String ->) : Nil
+      server = HTTP::Server.new { |ctx| handle(ctx) }
+      address = server.bind_tcp(@host, @port)
+      yield "http://#{address}"
+      server.listen
+    end
+
+    # Route one request. Public so specs can drive it without a socket.
+    def handle(ctx : HTTP::Server::Context) : Nil
+      @store.refresh # pick up edits the CLI or an MCP session made meanwhile
+      c = Ctx.new(ctx)
+      route(c)
+    rescue ex : Money::Error | Error | KeyError | TypeCastError
+      # A bad filter (invalid month, unparsable amount) or a form missing a
+      # field: say so on the page that sent it rather than 500.
+      c ||= Ctx.new(ctx)
+      message = ex.is_a?(KeyError) || ex.is_a?(TypeCastError) ? "missing or invalid field" : ex.message.to_s
+      c.finish(true, message, c.referer)
+    end
+
+    # --- routing --------------------------------------------------------
+
+    private def route(c : Ctx) : Nil
+      case {c.method, c.path}
+      when {"GET", "/"}                  then page_overview(c)
+      when {"GET", "/register"}          then page_register(c)
+      when {"GET", "/balances"}          then page_balances(c)
+      when {"GET", "/income"}            then page_income(c)
+      when {"GET", "/balance-sheet"}     then page_balance_sheet(c)
+      when {"GET", "/daily"}             then page_daily(c)
+      when {"GET", "/accounts"}          then page_accounts(c)
+      when {"GET", "/budgets"}           then page_budgets(c)
+      when {"GET", "/recurring"}         then page_recurring(c)
+      when {"GET", "/due"}               then page_due(c)
+      when {"GET", "/reconcile"}         then page_reconcile(c)
+      when {"GET", "/history"}           then page_history(c)
+      when {"GET", "/record"}            then page_record(c)
+      when {"GET", "/static/style.css"}  then c.asset("text/css", STYLE)
+      when {"GET", "/static/app.js"}     then c.asset("text/javascript", SCRIPT)
+      when {"POST", "/record/spend"}     then perform(c, "spend", args(c, "amount", "account", "from", "memo", "date", "recurrence"), "/register")
+      when {"POST", "/record/earn"}      then perform(c, "earn", args(c, "amount", "account", "to", "memo", "date", "recurrence"), "/register")
+      when {"POST", "/record/transfer"}  then perform(c, "transfer", args(c, "amount", "from", "to", "memo", "date"), "/register")
+      when {"POST", "/accounts/add"}     then perform(c, "accounts add", {"names" => list(c["names"].split)}, "/accounts")
+      when {"POST", "/budgets/set"}      then perform(c, "budget set", args(c, "account", "amount"), "/budgets")
+      when {"POST", "/budgets/rm"}       then perform(c, "budget rm", args(c, "account"), "/budgets")
+      when {"POST", "/recurring/off"}    then perform(c, "recurring off", {"id" => JSON::Any.new(c["id"].to_i64)}, "/recurring")
+      when {"POST", "/due/stage"}        then post_due_stage(c)
+      when {"POST", "/due/edit"}         then post_due_edit(c)
+      when {"POST", "/due/post"}         then perform(c, "due post", {} of String => JSON::Any, "/due")
+      when {"POST", "/reconcile/mark"}   then post_reconcile_mark(c)
+      when {"POST", "/reconcile/commit"} then post_reconcile_commit(c)
+      when {"POST", "/undo"}             then perform(c, "undo", args(c, "id").tap { |a| a["id"] = JSON::Any.new(c["id"].to_i64) if c["id"]?.presence }, "/history")
+      when {"POST", "/redo"}             then perform(c, "redo", {} of String => JSON::Any, "/history")
+      else
+        c.not_found
+      end
+    end
+
+    # --- pages ----------------------------------------------------------
+
+    private def page_overview(c : Ctx) : Nil
+      month = current_month
+      c.html render(c, "Overview", "overview", OverviewPage.new(
+        @app.balance_sheet, @app.income_statement(month), @app.due_queue.size,
+        @app.budgets(month), @app.register(limit: 8).rows.reverse, today
+      ).to_s)
+    end
+
+    private def page_register(c : Ctx) : Nil
+      view = @app.register(
+        account: c["account"]?.presence,
+        month: c["month"]?.presence,
+        since: c["since"]?.presence,
+        until_date: c["until"]?.presence,
+        min: c["min"]?.presence.try { |m| Money.parse(m) },
+        max: c["max"]?.presence.try { |m| Money.parse(m) },
+        match: c["q"]?.presence,
+        limit: c["limit"]?.presence.try(&.to_i?),
+      )
+      c.html render(c, "Register", "register", RegisterPage.new(view, c.params, account_names).to_s)
+    end
+
+    private def page_balances(c : Ctx) : Nil
+      prefix = c["prefix"]?.presence
+      c.html render(c, "Balances", "balances", BalancesPage.new(@app.balances(prefix), prefix).to_s)
+    end
+
+    private def page_income(c : Ctx) : Nil
+      month = c["month"]?.presence || current_month
+      c.html render(c, "Income statement", "income", IncomePage.new(@app.income_statement(month)).to_s)
+    end
+
+    private def page_balance_sheet(c : Ctx) : Nil
+      as_of = c["date"]?.presence
+      c.html render(c, "Balance sheet", "balance-sheet", BalanceSheetPage.new(@app.balance_sheet(as_of), as_of || today).to_s)
+    end
+
+    private def page_daily(c : Ctx) : Nil
+      c.html render(c, "Daily cost", "daily", DailyPage.new(@app.daily).to_s)
+    end
+
+    private def page_accounts(c : Ctx) : Nil
+      c.html render(c, "Accounts", "accounts", AccountsPage.new(@app.chart, @store.account_policy).to_s)
+    end
+
+    private def page_budgets(c : Ctx) : Nil
+      month = c["month"]?.presence || current_month
+      c.html render(c, "Budgets", "budgets", BudgetsPage.new(@app.budgets(month), month, account_names).to_s)
+    end
+
+    private def page_recurring(c : Ctx) : Nil
+      c.html render(c, "Recurring", "recurring", RecurringPage.new(@store.recurring_rules, @app).to_s)
+    end
+
+    private def page_due(c : Ctx) : Nil
+      c.html render(c, "Due", "due", DuePage.new(@app.due_queue, @app).to_s)
+    end
+
+    private def page_reconcile(c : Ctx) : Nil
+      account = c["account"]?.presence
+      statement = c["statement"]?.presence.try { |s| Money.parse(s) }
+      view = account ? @app.reconciliation(account, statement) : nil
+      past = account ? @store.reconciliations(account) : [] of Reconciliation
+      c.html render(c, "Reconcile", "reconcile", ReconcilePage.new(view, past, account_names, c["statement"]?.presence).to_s)
+    end
+
+    private def page_history(c : Ctx) : Nil
+      c.html render(c, "History", "history", HistoryPage.new(@app.history, @store.db.redo_snapshot.nil?).to_s)
+    end
+
+    private def page_record(c : Ctx) : Nil
+      c.html render(c, "Record", "record", RecordPage.new(account_names, today, c["kind"]?.presence || "spend").to_s)
+    end
+
+    # --- writes ---------------------------------------------------------
+
+    # Decisions arrive as `status-<id>=pending|ok|skip`, one per row (the whole
+    # table without JS, a single row with it). Group them into the CLI's own
+    # `due ok/skip/reset` calls.
+    private def post_due_stage(c : Ctx) : Nil
+      groups = {"ok" => [] of String, "skip" => [] of String, "pending" => [] of String}
+      c.params.each do |name, value|
+        next unless name.starts_with?("status-") && groups.has_key?(value)
+        groups[value] << name.lchop("status-")
+      end
+      messages = [] of String
+      {"ok" => "due ok", "skip" => "due skip", "pending" => "due reset"}.each do |status, command|
+        next if groups[status].empty?
+        output, error = @app.execute(command, JSON::Any.new({"ids" => list(groups[status])}))
+        return c.finish(error, output, "/due") if error
+        messages << output
+      end
+      staged = @store.due_entries.count { |e| e.status != "pending" }
+      c.finish(false, messages.join("\n"), "/due", {"staged" => staged})
+    end
+
+    private def post_due_edit(c : Ctx) : Nil
+      a = args(c, "amount", "date", "memo")
+      a["id"] = JSON::Any.new(c["id"].to_i64)
+      perform(c, "due edit", a, "/due")
+    end
+
+    # `ids` lists every row the client is deciding about and `clear` the ones
+    # that should be staged; the rest of `ids` are unstaged. The JS sends one
+    # row at a time, the plain form the whole working list.
+    private def post_reconcile_mark(c : Ctx) : Nil
+      account = c["account"]
+      ids = c.all("ids")
+      clear = c.all("clear")
+      unclear = ids - clear
+      back = "/reconcile?account=#{URI.encode_www_form(account)}"
+      back += "&statement=#{URI.encode_www_form(c["statement"])}" if c["statement"]?.presence
+
+      {"clear" => clear, "unclear" => unclear}.each do |action, targets|
+        next if targets.empty?
+        output, error = @app.execute("reconcile", JSON::Any.new({
+          "account" => JSON::Any.new(account), "action" => JSON::Any.new(action), "args" => list(targets),
+        }))
+        return c.finish(error, output, back) if error
+      end
+
+      view = @app.reconciliation(account, c["statement"]?.presence.try { |s| Money.parse(s) })
+      c.finish(false, "Saved.", back, {
+        "cleared"    => Money.format(view.cleared),
+        "ledger"     => Money.format(view.ledger),
+        "staged"     => view.staged_count,
+        "difference" => view.difference.try { |d| Money.format(d) },
+        "matches"    => view.matches?,
+      })
+    end
+
+    private def post_reconcile_commit(c : Ctx) : Nil
+      account = c["account"]
+      a = {
+        "account" => JSON::Any.new(account),
+        "action"  => JSON::Any.new("commit"),
+        "args"    => list([c["statement"]]),
+        "adjust"  => JSON::Any.new(c["adjust"]?.presence ? true : false),
+      }
+      perform(c, "reconcile", a, "/reconcile?account=#{URI.encode_www_form(account)}")
+    end
+
+    # Run a command and answer: JSON for fetch callers, else a redirect that
+    # carries the command's output (or error) as the next page's note.
+    private def perform(c : Ctx, subcommand : String, arguments : Hash(String, JSON::Any), back : String) : Nil
+      output, error = @app.execute(subcommand, JSON::Any.new(arguments))
+      c.finish(error, output, back)
+    end
+
+    # --- helpers --------------------------------------------------------
+
+    # The named form fields that were filled in, as command arguments.
+    private def args(c : Ctx, *names : String) : Hash(String, JSON::Any)
+      out = {} of String => JSON::Any
+      names.each do |n|
+        if v = c[n]?.presence
+          out[n] = JSON::Any.new(v.strip)
+        end
+      end
+      out
+    end
+
+    private def list(items : Array(String)) : JSON::Any
+      JSON::Any.new(items.map { |i| JSON::Any.new(i) })
+    end
+
+    private def account_names : Array(String)
+      @store.known_accounts
+    end
+
+    private def render(c : Ctx, title : String, active : String, body : String) : String
+      Layout.new(title, active, body, @store.path, @store.due_entries.size, c.flash).to_s
+    end
+
+    private def today : String
+      Time.local.to_s("%Y-%m-%d")
+    end
+
+    private def current_month : String
+      Time.local.to_s("%Y-%m")
+    end
+
+    # A request/response pair with the few conveniences the handlers need:
+    # merged query+form params, the flash note carried across a redirect, and
+    # content negotiation for the JS callers.
+    class Ctx
+      getter params : HTTP::Params
+      getter flash : {String, String}? # {kind, text}
+
+      def initialize(@ctx : HTTP::Server::Context)
+        @params = @ctx.request.query_params.dup
+        if @ctx.request.method == "POST"
+          body = @ctx.request.body.try(&.gets_to_end) || ""
+          HTTP::Params.parse(body).each { |k, v| @params.add(k, v) }
+        end
+        @flash = read_flash
+      end
+
+      def method : String
+        @ctx.request.method
+      end
+
+      def path : String
+        @ctx.request.path
+      end
+
+      def [](name : String) : String
+        @params[name]? || raise Error.new("missing field '#{name}'")
+      end
+
+      def []?(name : String) : String?
+        @params[name]?
+      end
+
+      # Every value posted under `name` (multi-valued fields).
+      def all(name : String) : Array(String)
+        @params.fetch_all(name).reject(&.blank?)
+      end
+
+      def referer : String
+        @ctx.request.headers["Referer"]? || "/"
+      end
+
+      def wants_json? : Bool
+        @ctx.request.headers["Accept"]?.try(&.includes?("application/json")) || false
+      end
+
+      def html(body : String) : Nil
+        res = @ctx.response
+        res.content_type = "text/html; charset=utf-8"
+        clear_flash if @flash
+        res.print(body)
+      end
+
+      def asset(type : String, body : String) : Nil
+        res = @ctx.response
+        res.content_type = type
+        res.headers["Cache-Control"] = "no-cache"
+        res.print(body)
+      end
+
+      def json(data) : Nil
+        res = @ctx.response
+        res.content_type = "application/json"
+        res.print(data.to_json)
+      end
+
+      def not_found : Nil
+        @ctx.response.status = HTTP::Status::NOT_FOUND
+        @ctx.response.content_type = "text/plain"
+        @ctx.response.print("not found")
+      end
+
+      # Answer a completed write: JSON (with any extra fields) for fetch
+      # callers, otherwise redirect and carry the message as a note.
+      def finish(error : Bool, message : String, back : String, extra = nil) : Nil
+        if wants_json?
+          payload = {"ok" => !error, "message" => message}
+          @ctx.response.status = HTTP::Status::UNPROCESSABLE_ENTITY if error
+          json(extra ? payload.merge(extra) : payload)
+        elsif error
+          redirect(back, error: message)
+        else
+          redirect(back, notice: message)
+        end
+      end
+
+      def redirect(to : String, notice : String? = nil, error : String? = nil) : Nil
+        res = @ctx.response
+        if text = error || notice
+          kind = error ? "error" : "notice"
+          # Cookies are small; the note is a summary, not a transcript.
+          text = "#{text[0, 900]}…" if text.size > 900
+          res.cookies << HTTP::Cookie.new(FLASH_COOKIE, URI.encode_www_form("#{kind}:#{text}"), path: "/", http_only: true)
+        end
+        res.status = HTTP::Status::SEE_OTHER
+        res.headers["Location"] = to
+      end
+
+      private def read_flash : {String, String}?
+        raw = @ctx.request.cookies[FLASH_COOKIE]?.try(&.value)
+        return nil unless raw
+        decoded = URI.decode_www_form(raw)
+        kind, _, text = decoded.partition(':')
+        {kind, text}
+      end
+
+      private def clear_flash : Nil
+        @ctx.response.cookies << HTTP::Cookie.new(FLASH_COOKIE, "", path: "/", expires: Time.unix(0), http_only: true)
+      end
+    end
+
+    # --- templates ------------------------------------------------------
+
+    # Helpers available inside every template.
+    module Helpers
+      def h(value) : String
+        HTML.escape(value.to_s)
+      end
+
+      # An amount cell: monospace, signed, red when negative.
+      def money(cents : Int64) : String
+        %(<span class="num#{cents < 0 ? " neg" : ""}">#{Money.format(cents)}</span>)
+      end
+
+      def money(cents : Float64) : String
+        money(cents.round.to_i64)
+      end
+
+      def url(path : String, **query) : String
+        pairs = query.to_h.compact_map { |k, v| v ? "#{k}=#{URI.encode_www_form(v.to_s)}" : nil }
+        pairs.empty? ? path : "#{path}?#{pairs.join('&')}"
+      end
+
+      # Account names as <option>s for a select/datalist.
+      def account_options(names : Array(String), selected : String? = nil) : String
+        names.map { |n| %(<option value="#{h n}"#{n == selected ? " selected" : ""}>#{h n}</option>) }.join
+      end
+
+      def cadence_options(selected : String? = nil) : String
+        Recurrence.names.map { |n| %(<option value="#{n}"#{n == selected ? " selected" : ""}>#{n}</option>) }.join
+      end
+
+      # The ledger path for the sidebar: $HOME shortened, and only the tail if
+      # it's still long (the full path is in the title attribute).
+      def home(path : String) : String
+        short = path.sub(/\A#{Regex.escape(Path.home.to_s)}/, "~")
+        parts = short.split('/')
+        parts.size > 3 ? "…/#{parts.last(2).join('/')}" : short
+      end
+    end
+
+    class Layout
+      include Helpers
+
+      def initialize(@title : String, @active : String, @body : String, @book : String,
+                     @due_count : Int32, @flash : {String, String}?)
+      end
+
+      def nav(name : String) : String
+        name == @active ? %( aria-current="page") : ""
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/layout.ecr"
+    end
+
+    class OverviewPage
+      include Helpers
+
+      def initialize(@sheet : BalanceSheet, @statement : IncomeStatement, @due : Int32,
+                     @budgets : Array(BudgetRow), @recent : Array(RegisterRow), @today : String)
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/overview.ecr"
+    end
+
+    class RegisterPage
+      include Helpers
+
+      def initialize(@view : RegisterView, @params : HTTP::Params, @accounts : Array(String))
+      end
+
+      def param(name : String) : String
+        h(@params[name]? || "")
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/register.ecr"
+    end
+
+    class BalancesPage
+      include Helpers
+
+      def initialize(@rows : Array({String, Int64}), @prefix : String?)
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/balances.ecr"
+    end
+
+    class IncomePage
+      include Helpers
+
+      def initialize(@statement : IncomeStatement)
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/income.ecr"
+    end
+
+    class BalanceSheetPage
+      include Helpers
+
+      def initialize(@sheet : BalanceSheet, @as_of : String)
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/balance_sheet.ecr"
+    end
+
+    class DailyPage
+      include Helpers
+
+      def initialize(@report : DailyReport)
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/daily.ecr"
+    end
+
+    class AccountsPage
+      include Helpers
+
+      def initialize(@rows : Array(AccountRow), @policy : String)
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/accounts.ecr"
+    end
+
+    class BudgetsPage
+      include Helpers
+
+      def initialize(@rows : Array(BudgetRow), @month : String, @accounts : Array(String))
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/budgets.ecr"
+    end
+
+    class RecurringPage
+      include Helpers
+
+      def initialize(@rules : Array(RecurringRule), @app : App)
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/recurring.ecr"
+    end
+
+    class DuePage
+      include Helpers
+
+      def initialize(@entries : Array(DueEntry), @app : App)
+      end
+
+      def staged : Int32
+        @entries.count { |e| e.status != "pending" }
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/due.ecr"
+    end
+
+    class ReconcilePage
+      include Helpers
+
+      def initialize(@view : ReconcileView?, @past : Array(Reconciliation), @accounts : Array(String), @statement : String?)
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/reconcile.ecr"
+    end
+
+    class HistoryPage
+      include Helpers
+
+      def initialize(@rows : Array(HistoryRow), @redo_empty : Bool)
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/history.ecr"
+    end
+
+    class RecordPage
+      include Helpers
+
+      def initialize(@accounts : Array(String), @today : String, @kind : String)
+      end
+
+      def tab(kind : String) : String
+        kind == @kind ? %( aria-current="page") : ""
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/record.ecr"
+    end
+  end
+end

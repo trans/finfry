@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title><%= h @title %> · finfry</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+  <nav class="side" aria-label="Sections">
+    <a class="brand" href="/">finfry</a>
+    <div class="book" title="<%= h @book %>"><%= h home(@book) %></div>
+    <ul>
+      <li><a href="/"<%= nav "overview" %>>Overview</a></li>
+      <li><a href="/register"<%= nav "register" %>>Register</a></li>
+      <li><a href="/balances"<%= nav "balances" %>>Balances</a></li>
+      <li class="head">Reports</li>
+      <li><a class="sub" href="/income"<%= nav "income" %>>Income statement</a></li>
+      <li><a class="sub" href="/balance-sheet"<%= nav "balance-sheet" %>>Balance sheet</a></li>
+      <li><a class="sub" href="/daily"<%= nav "daily" %>>Daily cost</a></li>
+      <li class="head">Books</li>
+      <li><a href="/accounts"<%= nav "accounts" %>>Accounts</a></li>
+      <li><a href="/budgets"<%= nav "budgets" %>>Budgets</a></li>
+      <li><a href="/recurring"<%= nav "recurring" %>>Recurring</a></li>
+      <li><a href="/due"<%= nav "due" %>>Due<% if @due_count > 0 %> <span class="count"><%= @due_count %></span><% end %></a></li>
+      <li><a href="/reconcile"<%= nav "reconcile" %>>Reconcile</a></li>
+      <li><a href="/history"<%= nav "history" %>>History</a></li>
+    </ul>
+    <a class="button primary record-link" href="/record">Record an entry</a>
+  </nav>
+  <main id="main">
+    <% if f = @flash %>
+    <div class="flash <%= f[0] %>" role="status"><pre><%= h f[1] %></pre></div>
+    <% end %>
+    <%= @body %>
+  </main>
+</div>
+<script src="/static/app.js" defer></script>
+</body>
+</html>

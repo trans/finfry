@@ -1,0 +1,29 @@
+<header class="page-head">
+  <h1>Income statement</h1>
+  <p class="sub">What came in and went out during <strong><%= @statement.month %></strong></p>
+</header>
+
+<form class="filters" method="get" action="/income">
+  <label>Month <input type="month" name="month" value="<%= @statement.month %>"></label>
+  <button type="submit">Show</button>
+</form>
+
+<% if @statement.empty? %>
+  <p class="empty">No transactions for <%= @statement.month %>.</p>
+<% else %>
+  <table class="ledger statement">
+    <tbody>
+      <tr class="section"><th colspan="2">Income</th></tr>
+      <% @statement.income.each do |(account, cents)| %>
+        <tr><td><a href="<%= url "/register", account: account, month: @statement.month %>"><%= h account %></a></td><td class="num-col"><%= money cents %></td></tr>
+      <% end %>
+      <tr class="subtotal"><th>Total income</th><td class="num-col"><%= money @statement.total_income %></td></tr>
+      <tr class="section"><th colspan="2">Expenses</th></tr>
+      <% @statement.expenses.each do |(account, cents)| %>
+        <tr><td><a href="<%= url "/register", account: account, month: @statement.month %>"><%= h account %></a></td><td class="num-col"><%= money cents %></td></tr>
+      <% end %>
+      <tr class="subtotal"><th>Total expenses</th><td class="num-col"><%= money @statement.total_expenses %></td></tr>
+      <tr class="total"><th>Net</th><td class="num-col"><%= money @statement.net %></td></tr>
+    </tbody>
+  </table>
+<% end %>

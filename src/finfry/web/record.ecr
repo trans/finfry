@@ -1,0 +1,43 @@
+<header class="page-head">
+  <h1>Record an entry</h1>
+  <p class="sub">Each form builds the balanced pair of postings for you.</p>
+</header>
+
+<nav class="tabs" aria-label="Entry kind">
+  <a href="/record?kind=spend"<%= tab "spend" %>>Spend</a>
+  <a href="/record?kind=earn"<%= tab "earn" %>>Earn</a>
+  <a href="/record?kind=transfer"<%= tab "transfer" %>>Transfer</a>
+</nav>
+<datalist id="accounts"><%= account_options @accounts %></datalist>
+
+<% if @kind == "earn" %>
+<form class="entry" method="post" action="/record/earn">
+  <label>Amount <input name="amount" inputmode="decimal" placeholder="3000" required autofocus></label>
+  <label>Income account <input list="accounts" name="account" placeholder="Income:Salary" required></label>
+  <label>Received into <input list="accounts" name="to" value="<%= Finfry::DEFAULT_ASSET_ACCOUNT %>"></label>
+  <label>Memo <input name="memo" placeholder="Paycheck"></label>
+  <label>Date <input type="date" name="date" value="<%= @today %>"></label>
+  <label>Recurs <select name="recurrence"><option value="">no</option><%= cadence_options %></select></label>
+  <button type="submit" class="primary">Record income</button>
+</form>
+<% elsif @kind == "transfer" %>
+<form class="entry" method="post" action="/record/transfer">
+  <label>Amount <input name="amount" inputmode="decimal" placeholder="500" required autofocus></label>
+  <label>From <input list="accounts" name="from" value="<%= Finfry::DEFAULT_ASSET_ACCOUNT %>" required></label>
+  <label>To <input list="accounts" name="to" placeholder="Assets:Savings" required></label>
+  <label>Memo <input name="memo" placeholder="Monthly savings"></label>
+  <label>Date <input type="date" name="date" value="<%= @today %>"></label>
+  <button type="submit" class="primary">Record transfer</button>
+</form>
+<% else %>
+<form class="entry" method="post" action="/record/spend">
+  <label>Amount <input name="amount" inputmode="decimal" placeholder="12.50" required autofocus></label>
+  <label>Expense account <input list="accounts" name="account" placeholder="Expenses:Food:Coffee" required></label>
+  <label>Paid from <input list="accounts" name="from" value="<%= Finfry::DEFAULT_ASSET_ACCOUNT %>"></label>
+  <label>Memo <input name="memo" placeholder="Starbucks"></label>
+  <label>Date <input type="date" name="date" value="<%= @today %>"></label>
+  <label>Recurs <select name="recurrence"><option value="">no</option><%= cadence_options %></select></label>
+  <button type="submit" class="primary">Record expense</button>
+</form>
+<% end %>
+<p class="hint">Splits across several accounts are recorded from the command line: <code>finfry add -m "market run" Expenses:Food:Groceries 42 Expenses:Food:Snacks 8 Assets:Checking</code>.</p>

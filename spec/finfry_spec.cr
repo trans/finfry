@@ -847,3 +847,181 @@ def with_store(&)
     File.delete(path) if File.exists?(path)
   end
 end
+
+describe "Finfry::App queries" do
+  it "register with an account carries the true running balance through a filtered window" do
+    with_store do |store|
+      store.record("2026-06-01", "salary",
+        [Finfry::Posting.new("Assets:Checking", 100000_i64), Finfry::Posting.new("Income:Salary", -100000_i64)])
+      store.record("2026-06-05", "food",
+        [Finfry::Posting.new("Expenses:Food", 20000_i64), Finfry::Posting.new("Assets:Checking", -20000_i64)])
+
+      view = Finfry::App.new(store).register(account: "Assets:Checking", since: "2026-06-05")
+      view.rows.size.should eq(1)
+      view.rows.first.leg.should eq(-20000_i64)
+      view.rows.first.running.should eq(80000_i64)
+
+      Finfry::App.new(store).register.rows.first.running.should be_nil # no account: no running column
+    end
+  end
+
+  it "income_statement reports credit-normal income as positive with totals and net" do
+    with_store do |store|
+      store.record("2026-06-01", "salary",
+        [Finfry::Posting.new("Assets:Checking", 100000_i64), Finfry::Posting.new("Income:Salary", -100000_i64)])
+      store.record("2026-06-05", "food",
+        [Finfry::Posting.new("Expenses:Food", 20000_i64), Finfry::Posting.new("Assets:Checking", -20000_i64)])
+      store.record("2026-07-01", "later",
+        [Finfry::Posting.new("Expenses:Food", 500_i64), Finfry::Posting.new("Assets:Checking", -500_i64)])
+
+      st = Finfry::App.new(store).income_statement("2026-06")
+      st.income.should eq([{"Income:Salary", 100000_i64}])
+      st.expenses.should eq([{"Expenses:Food", 20000_i64}])
+      st.net.should eq(80000_i64)
+      Finfry::App.new(store).income_statement("2026-05").empty?.should be_true
+      expect_raises(Finfry::Error) { Finfry::App.new(store).income_statement("June") }
+    end
+  end
+
+  it "reconciliation flags staged rows and measures the gap to a statement" do
+    with_store do |store|
+      a = store.record("2026-06-01", "salary",
+        [Finfry::Posting.new("Assets:Checking", 100000_i64), Finfry::Posting.new("Income:Salary", -100000_i64)])
+      store.record("2026-06-05", "food",
+        [Finfry::Posting.new("Expenses:Food", 20000_i64), Finfry::Posting.new("Assets:Checking", -20000_i64)])
+      store.set_cleared("Assets:Checking", [a.id], true)
+
+      view = Finfry::App.new(store).reconciliation("Assets:Checking", 99000_i64)
+      view.rows.map(&.cleared?).should eq([true, false])
+      view.cleared.should eq(100000_i64)
+      view.ledger.should eq(80000_i64)
+      view.staged_count.should eq(1)
+      view.difference.should eq(-1000_i64)
+      view.matches?.should be_false
+      Finfry::App.new(store).reconciliation("Assets:Checking").difference.should be_nil
+    end
+  end
+
+  it "budgets rows know when they're over" do
+    with_store do |store|
+      store.record("2026-06-05", "food",
+        [Finfry::Posting.new("Expenses:Food", 20000_i64), Finfry::Posting.new("Assets:Checking", -20000_i64)])
+      store.set_budget("Expenses:Food", 15000_i64)
+      row = Finfry::App.new(store).budgets("2026-06").first
+      row.remaining.should eq(-5000_i64)
+      row.over?.should be_true
+    end
+  end
+end
+
+describe Finfry::Store do
+  it "refresh reloads the ledger when another process wrote it" do
+    with_store do |store|
+      other = Finfry::Store.new(store.path)
+      store.refresh.should be_false
+      other.record("2026-06-01", "elsewhere",
+        [Finfry::Posting.new("Expenses:Food", 100_i64), Finfry::Posting.new("Assets:Checking", -100_i64)])
+      store.transactions.size.should eq(0)
+      store.refresh.should be_true
+      store.transactions.size.should eq(1)
+      store.refresh.should be_false
+    end
+  end
+end
+
+# Drive the web UI's router directly (no socket): returns the response's
+# status, headers and body for one request.
+def web_request(web : Finfry::Web, method : String, path : String, body : String? = nil,
+                headers : HTTP::Headers = HTTP::Headers.new) : {Int32, HTTP::Headers, String}
+  headers["Content-Type"] = "application/x-www-form-urlencoded" if body
+  request = HTTP::Request.new(method, path, headers, body)
+  io = IO::Memory.new
+  response = HTTP::Server::Response.new(io)
+  web.handle(HTTP::Server::Context.new(request, response))
+  response.close
+  raw = HTTP::Client::Response.from_io(IO::Memory.new(io.to_s))
+  {raw.status_code, raw.headers, raw.body}
+end
+
+describe Finfry::Web do
+  it "renders the overview with the accounting equation" do
+    with_store do |store|
+      store.record("2026-06-01", "salary",
+        [Finfry::Posting.new("Assets:Checking", 100000_i64), Finfry::Posting.new("Income:Salary", -100000_i64)])
+      status, _, body = web_request(Finfry::Web.new(store), "GET", "/")
+      status.should eq(200)
+      body.should contain("The books balance")
+      body.should contain("$1,000.00")
+    end
+  end
+
+  it "records an expense from the form, redirects, and carries the result as a note" do
+    with_store do |store|
+      store.declare_account("Expenses:Food")
+      web = Finfry::Web.new(store)
+      status, headers, _ = web_request(web, "POST", "/record/spend",
+        "amount=12.50&account=Expenses:Food&from=Assets:Checking&memo=Lunch&date=2026-06-05&recurrence=")
+      status.should eq(303)
+      headers["Location"].should eq("/register")
+      cookie = headers["Set-Cookie"]
+      cookie.should contain("finfry_flash=")
+
+      store.transactions.size.should eq(1)
+      store.transactions.first.description.should eq("Lunch")
+
+      # the next page shows the note once, then clears the cookie
+      value = cookie.split(';').first.split('=', 2).last
+      status, headers, body = web_request(web, "GET", "/register", headers: HTTP::Headers{"Cookie" => "finfry_flash=#{value}"})
+      status.should eq(200)
+      body.should contain("Recorded #1")
+      headers["Set-Cookie"].should contain("expires=")
+    end
+  end
+
+  it "surfaces a command error as an error note instead of a 500" do
+    with_store do |store|
+      _, headers, _ = web_request(Finfry::Web.new(store), "POST", "/record/spend", "amount=abc&account=Expenses:Food")
+      URI.decode_www_form(headers["Set-Cookie"]).should contain("error:invalid amount")
+    end
+  end
+
+  it "answers JSON to fetch callers on the reconcile mark endpoint" do
+    with_store do |store|
+      a = store.record("2026-06-01", "salary",
+        [Finfry::Posting.new("Assets:Checking", 100000_i64), Finfry::Posting.new("Income:Salary", -100000_i64)])
+      status, _, body = web_request(Finfry::Web.new(store), "POST", "/reconcile/mark",
+        "account=Assets:Checking&statement=1000&ids=#{a.id}&clear=#{a.id}", HTTP::Headers{"Accept" => "application/json"})
+      status.should eq(200)
+      json = JSON.parse(body)
+      json["ok"].as_bool.should be_true
+      json["cleared"].as_s.should eq("$1,000.00")
+      json["matches"].as_bool.should be_true
+      store.cleared?("Assets:Checking", a.id).should be_true
+    end
+  end
+
+  it "groups due decisions into ok/skip/reset and reports the staged count" do
+    with_store do |store|
+      # Yearly from 2025: exactly two occurrences are due until 2027, so the
+      # page's own catch-up (as of today) adds nothing more.
+      store.add_recurring_rule("Prime", "yearly", "2025-01-01", expense("Expenses:Food", 11988))
+      store.generate_due("2026-02-01")
+      ids = store.due_entries.map(&.id)
+      ids.size.should eq(2)
+      status, _, body = web_request(Finfry::Web.new(store), "POST", "/due/stage",
+        "status-#{ids[0]}=ok&status-#{ids[1]}=skip", HTTP::Headers{"Accept" => "application/json"})
+      status.should eq(200)
+      JSON.parse(body)["staged"].as_i.should eq(2)
+      store.due_entries.map(&.status).sort.should eq(["ok", "skip"])
+    end
+  end
+
+  it "serves the embedded assets and 404s elsewhere" do
+    with_store do |store|
+      web = Finfry::Web.new(store)
+      web_request(web, "GET", "/static/style.css")[0].should eq(200)
+      web_request(web, "GET", "/static/app.js")[0].should eq(200)
+      web_request(web, "GET", "/nope")[0].should eq(404)
+    end
+  end
+end

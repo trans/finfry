@@ -4,6 +4,7 @@ require "./store"
 require "./money"
 require "./recurrence"
 require "./ai"
+require "./queries"
 
 module Finfry
   # Wires the Jargon-defined CLI to the `Store` and renders output. Every entry
@@ -306,6 +307,15 @@ module Finfry
         description: Run as an MCP server (stdio) for use inside an agent harness
         YAML
 
+      cli.subcommand "serve", yaml: <<-YAML
+        type: object
+        description: Serve the web UI for this book (local only)
+        properties:
+          port: {type: integer, short: p, description: "Port to listen on", default: #{Web::DEFAULT_PORT}}
+          host: {type: string, description: "Address to bind", default: #{Web::DEFAULT_HOST}}
+          open: {type: boolean, short: o, description: "Open it in your browser"}
+        YAML
+
       cli.subcommand "delete", yaml: <<-YAML
         type: object
         description: Delete a transaction by id
@@ -482,6 +492,7 @@ module Finfry
       when "path"                 then cmd_path(result)
       when "version"              then cmd_version(result)
       when "mcp"                  then cmd_mcp(result)
+      when "serve"                then cmd_serve(result)
       when "delete"               then cmd_delete(result)
       when "recurring add"        then cmd_recurring_add(result)
       when "recurring interest"   then cmd_recurring_interest(result)
@@ -659,49 +670,18 @@ module Finfry
     # --- reports ---------------------------------------------------------
 
     private def cmd_register(r : Jargon::Result) : Nil
-      txns = @store.transactions
-      account = r["account"]?.try(&.as_s)
+      view = register(
+        account: r["account"]?.try(&.as_s),
+        month: r["month"]?.try(&.as_s),
+        since: r["since"]?.try(&.as_s),
+        until_date: r["until"]?.try(&.as_s),
+        min: r["min"]?.try { |m| Money.parse(m.as_s) },
+        max: r["max"]?.try { |m| Money.parse(m.as_s) },
+        match: r["match"]?.try(&.as_s),
+        limit: r["limit"]?.try(&.as_i),
+      )
 
-      # When filtered to an account, precompute the true running balance at each
-      # of its transactions (over full history, in date order) so the column
-      # stays accurate even when later filters/limit show only a window.
-      running = nil
-      if account
-        running = {} of Int32 => Int64
-        bal = 0_i64
-        @store.transactions.select(&.touches?(account)).sort_by { |t| {t.date, t.id} }.each do |t|
-          bal += account_leg(t, account)
-          running[t.id] = display_cents(account, bal)
-        end
-        txns = txns.select(&.touches?(account))
-      end
-      if month = r["month"]?.try(&.as_s)
-        txns = txns.select(&.in_month?(month))
-      end
-      if since = r["since"]?.try(&.as_s)
-        txns = txns.select { |t| t.date >= since }
-      end
-      if before = r["until"]?.try(&.as_s)
-        txns = txns.select { |t| t.date <= before }
-      end
-      if min = r["min"]?.try(&.as_s)
-        floor = Money.parse(min)
-        txns = txns.select { |t| txn_magnitude(t) >= floor }
-      end
-      if max = r["max"]?.try(&.as_s)
-        ceil = Money.parse(max)
-        txns = txns.select { |t| txn_magnitude(t) <= ceil }
-      end
-      if q = r["match"]?.try(&.as_s)
-        needle = q.downcase
-        txns = txns.select { |t| t.description.downcase.includes?(needle) }
-      end
-      txns = txns.sort_by { |t| {t.date, t.id} }
-      if limit = r["limit"]?.try(&.as_i)
-        txns = txns.last(limit)
-      end
-
-      if txns.empty?
+      if view.empty?
         puts "No transactions found."
         return
       end
@@ -709,18 +689,20 @@ module Finfry
       # Account view: a compact one-line-per-transaction register with the
       # account's own movement and a running balance. Unfiltered view: full
       # postings per transaction.
-      if account && (run = running)
-        txns.each do |t|
+      if view.account
+        view.rows.each do |row|
+          t = row.txn
           memo = t.description
           memo += " (#{t.recurrence})" if t.recurrence
           memo = "#{memo[0, 27]}…" if memo.size > 28
           puts "#%-4d %s  %-28s %13s  %13s" % {
             t.id, t.date, memo,
-            Money.format(display_cents(account, account_leg(t, account))), Money.format(run[t.id]),
+            Money.format(row.leg.not_nil!), Money.format(row.running.not_nil!),
           }
         end
       else
-        txns.each do |t|
+        view.rows.each do |row|
+          t = row.txn
           header = "##{t.id}  #{t.date}"
           header += "  #{t.description}" unless t.description.empty?
           header += "  (#{t.recurrence})" if t.recurrence
@@ -757,34 +739,28 @@ module Finfry
     # cleared balance (committed + staged — what should match a statement), the
     # full ledger balance, and — if -s is given — whether they agree.
     private def cmd_reconcile_status(account : String, statement : String?) : Nil
-      cleared_raw = @store.reconciled_balance(account) + @store.cleared_balance(account)
-      cleared = display_cents(account, cleared_raw)
-      ledger = display_cents(account, @store.balances[account]? || 0_i64)
-      staged = @store.cleared_ids(account).to_set
-      working = reconcile_working_list(account)
+      view = reconciliation(account, statement.try { |st| Money.parse(st) })
 
       puts "Reconcile #{account}"
-      puts "  cleared balance:  %14s" % Money.format(cleared)
-      puts "  ledger balance:   %14s" % Money.format(ledger)
+      puts "  cleared balance:  %14s" % Money.format(view.cleared)
+      puts "  ledger balance:   %14s" % Money.format(view.ledger)
 
-      if last = @store.last_reconciliation(account)
+      if last = view.last
         puts "  last reconciled:  %14s on %s" % {Money.format(last.statement), last.date}
       end
 
-      unless working.empty?
-        puts "  to reconcile (#{working.size}, #{staged.size} cleared):"
-        working.each do |t|
-          mark = staged.includes?(t.id) ? "*" : " "
-          amount = display_cents(account, t.postings.sum(0_i64) { |p| p.account == account ? p.amount : 0_i64 })
-          memo = t.description.empty? ? "" : "  #{t.description}"
-          puts "  #{mark} ##{t.id}  #{t.date}  %12s%s" % {Money.format(amount), memo}
+      unless view.rows.empty?
+        puts "  to reconcile (#{view.rows.size}, #{view.staged_count} cleared):"
+        view.rows.each do |row|
+          mark = row.cleared? ? "*" : " "
+          memo = row.txn.description.empty? ? "" : "  #{row.txn.description}"
+          puts "  #{mark} ##{row.txn.id}  #{row.txn.date}  %12s%s" % {Money.format(row.amount), memo}
         end
       end
 
-      if statement
-        diff = Money.parse(statement) - cleared
-        puts "  statement:        %14s" % Money.format(Money.parse(statement))
-        if diff.zero?
+      if (target = view.statement) && (diff = view.difference)
+        puts "  statement:        %14s" % Money.format(target)
+        if view.matches?
           puts "  ✓ cleared balance matches — `reconcile #{account} commit #{statement}` to finalize"
         else
           puts "  ⚠ off by %s — clear/unclear until the cleared balance matches the statement" % Money.format(diff)
@@ -886,65 +862,47 @@ module Finfry
     end
 
     private def cmd_balance(r : Jargon::Result) : Nil
-      prefix = r["prefix"]?.try(&.as_s)
-      balances = @store.balances(prefix)
+      lines = balances(r["prefix"]?.try(&.as_s))
 
-      if balances.empty?
+      if lines.empty?
         puts "No balances to show."
         return
       end
 
-      width = balances.keys.max_of(&.size)
-      balances.to_a.sort_by { |(account, _)| account }.each do |(account, cents)|
-        puts "%-#{width}s  %14s" % {account, Money.format(display_cents(account, cents))}
+      width = lines.max_of { |(account, _)| account.size }
+      lines.each do |(account, cents)|
+        puts "%-#{width}s  %14s" % {account, Money.format(cents)}
       end
     end
 
     private def cmd_report(r : Jargon::Result) : Nil
       month = r["month"]?.try(&.as_s) || current_month
-      validate_month!(month)
-      txns = @store.transactions.select(&.in_month?(month))
+      statement = income_statement(month)
 
-      if txns.empty?
+      if statement.empty?
         puts "No transactions for #{month}."
         return
       end
 
-      income = Hash(String, Int64).new(0_i64)
-      expenses = Hash(String, Int64).new(0_i64)
-      txns.each do |t|
-        t.postings.each do |p|
-          income[p.account] += p.amount if p.account.starts_with?("Income")
-          expenses[p.account] += p.amount if p.account.starts_with?("Expenses")
-        end
-      end
-
-      total_income = -income.values.sum(0_i64) # Income is credit-normal
-      total_expenses = expenses.values.sum(0_i64)
-
       puts "Income statement for #{month}"
       puts "─" * 40
       puts "Income"
-      print_account_lines(income, flip: true)
-      puts "%-26s  %12s" % {"  Total income", Money.format(total_income)}
+      print_account_lines(statement.income)
+      puts "%-26s  %12s" % {"  Total income", Money.format(statement.total_income)}
       puts "Expenses"
-      print_account_lines(expenses, flip: false)
-      puts "%-26s  %12s" % {"  Total expenses", Money.format(total_expenses)}
+      print_account_lines(statement.expenses)
+      puts "%-26s  %12s" % {"  Total expenses", Money.format(statement.total_expenses)}
       puts "─" * 40
-      puts "%-26s  %12s" % {"Net", Money.format(total_income - total_expenses)}
+      puts "%-26s  %12s" % {"Net", Money.format(statement.net)}
     end
 
-    private def print_account_lines(accounts : Hash(String, Int64), flip : Bool) : Nil
-      accounts.to_a.sort_by { |(_, cents)| flip ? cents : -cents }.each do |(account, cents)|
-        amount = flip ? -cents : cents
-        puts "  %-24s  %12s" % {account, Money.format(amount)}
-      end
+    private def print_account_lines(lines : Array({String, Int64})) : Nil
+      lines.each { |(account, cents)| puts "  %-24s  %12s" % {account, Money.format(cents)} }
     end
 
     private def cmd_balancesheet(r : Jargon::Result) : Nil
       as_of = r["date"]?.try(&.as_s)
-      validate_date!(as_of) if as_of
-      sheet = Finfry.balance_sheet(@store.balances(up_to: as_of))
+      sheet = balance_sheet(as_of)
 
       puts "Balance sheet — #{as_of || today}"
       bs_section("Assets", sheet.assets, sheet.total_assets)
@@ -971,32 +929,29 @@ module Finfry
     end
 
     private def cmd_daily(r : Jargon::Result) : Nil
-      items = Finfry.recurring_items(@store.transactions)
-      if items.empty?
+      report = daily
+      if report.empty?
         puts "No recurring items. Tag one with -r when you spend or earn (e.g. -r monthly)."
         return
       end
 
-      width = items.max_of { |i| i.label.size }
-      expenses = items.select(&.expense?)
-      incomes = items.select(&.income?)
+      width = (report.expenses + report.incomes).max_of { |i| i.label.size }
 
-      unless expenses.empty?
+      unless report.expenses.empty?
         puts "Recurring expenses"
-        expenses.each { |i| puts daily_line(i, width) }
-        puts daily_total("Total", expenses.sum(&.per_day), width)
+        report.expenses.each { |i| puts daily_line(i, width) }
+        puts daily_total("Total", report.expense_per_day, width)
       end
 
-      unless incomes.empty?
-        puts "" unless expenses.empty?
+      unless report.incomes.empty?
+        puts "" unless report.expenses.empty?
         puts "Recurring income"
-        incomes.each { |i| puts daily_line(i, width) }
-        puts daily_total("Total", incomes.sum(&.per_day), width)
+        report.incomes.each { |i| puts daily_line(i, width) }
+        puts daily_total("Total", report.income_per_day, width)
       end
 
-      if !expenses.empty? && !incomes.empty?
-        net = incomes.sum(&.per_day) - expenses.sum(&.per_day)
-        puts daily_total("Net", net, width)
+      if !report.expenses.empty? && !report.incomes.empty?
+        puts daily_total("Net", report.net_per_day, width)
       end
     end
 
@@ -1059,6 +1014,16 @@ module Finfry
       MCP.new(@store).run
     end
 
+    private def cmd_serve(r : Jargon::Result) : Nil
+      host = r["host"]?.try(&.as_s) || Web::DEFAULT_HOST
+      port = r["port"]?.try(&.as_i) || Web::DEFAULT_PORT
+      Web.new(@store, host, port).run do |url|
+        puts "finfry serving #{@store.path}"
+        puts "  #{url}  (Ctrl-C to stop)"
+        Process.new("xdg-open", [url]) if r["open"]?.try(&.as_bool) rescue nil
+      end
+    end
+
     private def cmd_undo(r : Jargon::Result) : Nil
       if id = r["id"]?.try(&.as_i)
         if cs = @store.reverse(id, now, today)
@@ -1082,30 +1047,27 @@ module Finfry
     end
 
     private def cmd_history(r : Jargon::Result) : Nil
-      sets = @store.changesets.reverse
-      if limit = r["limit"]?.try(&.as_i)
-        sets = sets.first(limit)
-      end
-      if sets.empty?
+      rows = history(r["limit"]?.try(&.as_i))
+      if rows.empty?
         puts "No history yet."
         return
       end
-      sets.each do |cs|
-        flag = !cs.reversal? && @store.reversed?(cs.id) ? "  (reversed)" : ""
+      rows.each do |row|
+        cs = row.changeset
+        flag = row.reversed? ? "  (reversed)" : ""
         puts "##{cs.id}  #{cs.at}  #{cs.summary}#{flag}"
       end
     end
 
     private def cmd_accounts_list(r : Jargon::Result) : Nil
-      known = @store.known_accounts
-      if known.empty?
+      rows = chart
+      if rows.empty?
         puts "No accounts yet."
         return
       end
-      used = @store.used_accounts.to_set
-      known.each do |a|
-        marker = used.includes?(a) ? "" : "  (unused)"
-        puts "#{a}#{marker}#{meta_suffix(a)}"
+      rows.each do |row|
+        marker = row.used? ? "" : "  (unused)"
+        puts "#{row.name}#{marker}#{meta_suffix(row.name)}"
       end
     end
 
@@ -1199,7 +1161,7 @@ module Finfry
       postings = Finfry.postings_for(kind, amount, account, counter)
       enforce_account_policy!(postings) # catch typo'd accounts when the rule is defined
       rule = @store.add_recurring_rule(desc_of(r), cadence, start, postings)
-      puts "Added recurring ##{rule.id}: #{rule_label(rule)} every #{cadence}, next #{start}"
+      puts "Added recurring ##{rule.id}: #{label(rule)} every #{cadence}, next #{start}"
     end
 
     private def cmd_recurring_interest(r : Jargon::Result) : Nil
@@ -1230,7 +1192,7 @@ module Finfry
       end
       rules.each do |rule|
         tail = rule.active ? "" : "  (off)"
-        puts "##{rule.id}  %-9s  next %s  %s%s" % {rule.cadence, rule.next_date, rule_label(rule), tail}
+        puts "##{rule.id}  %-9s  next %s  %s%s" % {rule.cadence, rule.next_date, label(rule), tail}
       end
       puts "(run 'finfry due' to review what's due)"
     end
@@ -1244,23 +1206,13 @@ module Finfry
       end
     end
 
-    private def rule_label(rule : RecurringRule) : String
-      return "#{rule.description} (computed)" if rule.kind == "interest"
-      label_for(rule.description, rule.postings)
-    end
-
-    private def due_label(entry : DueEntry) : String
-      label_for(entry.description, entry.postings)
-    end
-
     private def label_for(description : String, postings : Array(Posting)) : String
       base = description.empty? ? postings.map(&.account).join(" / ") : description
       "#{base} (#{Money.format(postings.first.amount.abs)})"
     end
 
     private def cmd_due_list(r : Jargon::Result) : Nil
-      @store.generate_due(today)
-      entries = @store.due_entries.sort_by { |e| {e.date, e.id} }
+      entries = due_queue
       if entries.empty?
         puts "Nothing due."
         return
@@ -1271,7 +1223,7 @@ module Finfry
                when "skip" then "  ✗ skip"
                else             ""
                end
-        puts "##{e.id}  #{e.date}  #{due_label(e)}#{mark}"
+        puts "##{e.id}  #{e.date}  #{label(e)}#{mark}"
       end
       staged = entries.count { |e| e.status != "pending" }
       puts "(#{staged} staged — run 'finfry due post' to apply)" if staged > 0
@@ -1316,7 +1268,7 @@ module Finfry
       end
       entry.status = "ok"
       @store.save
-      puts "##{entry.id}  #{entry.date}  #{due_label(entry)}  ✓ ok"
+      puts "##{entry.id}  #{entry.date}  #{label(entry)}  ✓ ok"
     end
 
     private def cmd_due_post(r : Jargon::Result) : Nil
@@ -1344,22 +1296,19 @@ module Finfry
 
     private def cmd_budget_list(r : Jargon::Result) : Nil
       month = r["month"]?.try(&.as_s) || current_month
-      validate_month!(month)
-      budgets = @store.budgets
+      rows = budgets(month)
 
-      if budgets.empty?
+      if rows.empty?
         puts "No budgets set. Use 'finfry budget set <account> <amount>'."
         return
       end
 
       puts "Budgets for #{month}"
       puts "%-22s  %12s  %12s  %12s" % {"ACCOUNT", "SPENT", "LIMIT", "REMAINING"}
-      budgets.to_a.sort_by { |(account, _)| account }.each do |(account, limit)|
-        spent = @store.spent(account, month)
-        remaining = limit - spent
-        flag = remaining < 0 ? "  OVER" : ""
+      rows.each do |row|
+        flag = row.over? ? "  OVER" : ""
         puts "%-22s  %12s  %12s  %12s%s" % {
-          account, Money.format(spent), Money.format(limit), Money.format(remaining), flag,
+          row.account, Money.format(row.spent), Money.format(row.limit), Money.format(row.remaining), flag,
         }
       end
     end
@@ -1428,10 +1377,18 @@ module Finfry
     def execute_tool(name : String, arguments : JSON::Any) : {String, Bool}
       spec = agent_tools_spec.find { |s| s.name == name }
       return {"unknown tool '#{name}'", true} unless spec
-      output = capture { dispatch(Jargon::Result.new(arguments, subcommand: spec.subcommand)) }
+      output, error = execute(spec.subcommand, arguments)
+      {error ? "error: #{output}" : output, error}
+    end
+
+    # Run one dispatch subcommand (e.g. "spend", "due ok") with pre-parsed
+    # arguments, capturing its output instead of printing. Returns the output
+    # (or the error message) and whether it errored. The web UI's write path.
+    def execute(subcommand : String, arguments : JSON::Any) : {String, Bool}
+      output = capture { dispatch(Jargon::Result.new(arguments, subcommand: subcommand)) }
       {output.blank? ? "(done)" : output, false}
     rescue ex : Money::Error | Error
-      {"error: #{ex.message}", true}
+      {ex.message.to_s, true}
     end
 
     # The tools the agent may use. Read tools run live; write tools are queued.

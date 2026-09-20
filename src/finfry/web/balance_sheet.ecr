@@ -1,0 +1,41 @@
+<header class="page-head">
+  <h1>Balance sheet</h1>
+  <p class="sub">Assets, liabilities and equity as of <strong><%= @as_of %></strong></p>
+</header>
+
+<form class="filters" method="get" action="/balance-sheet">
+  <label>As of <input type="date" name="date" value="<%= @as_of %>"></label>
+  <button type="submit">Show</button>
+</form>
+
+<table class="ledger statement">
+  <tbody>
+    <tr class="section"><th colspan="2">Assets</th></tr>
+    <% @sheet.assets.each do |(account, value)| %>
+      <tr><td><a href="<%= url "/register", account: account %>"><%= h account %></a></td><td class="num-col"><%= money value %></td></tr>
+    <% end %>
+    <tr class="subtotal"><th>Total assets</th><td class="num-col"><%= money @sheet.total_assets %></td></tr>
+
+    <tr class="section"><th colspan="2">Liabilities</th></tr>
+    <% @sheet.liabilities.each do |(account, value)| %>
+      <tr><td><a href="<%= url "/register", account: account %>"><%= h account %></a></td><td class="num-col"><%= money value %></td></tr>
+    <% end %>
+    <tr class="subtotal"><th>Total liabilities</th><td class="num-col"><%= money @sheet.total_liabilities %></td></tr>
+
+    <tr class="section"><th colspan="2">Equity</th></tr>
+    <% @sheet.equity.each do |(account, value)| %>
+      <tr><td><%= h account %></td><td class="num-col"><%= money value %></td></tr>
+    <% end %>
+    <tr><td>Net income <span class="muted">(Income − Expenses)</span></td><td class="num-col"><%= money @sheet.net_income %></td></tr>
+    <tr class="subtotal"><th>Total equity</th><td class="num-col"><%= money @sheet.total_equity %></td></tr>
+  </tbody>
+</table>
+
+<p class="check <%= @sheet.balanced? ? "ok" : "off" %>">
+  <% rhs = @sheet.total_liabilities + @sheet.total_equity %>
+  <% if @sheet.balanced? %>
+    <span class="tick">✓</span> Assets = Liabilities + Equity &nbsp;<span class="num"><%= Money.format @sheet.total_assets %> = <%= Money.format rhs %></span>
+  <% else %>
+    <span class="warn">⚠</span> Assets ≠ Liabilities + Equity — off by <%= money @sheet.discrepancy %>. The ledger may have been edited by hand.
+  <% end %>
+</p>

@@ -1,0 +1,27 @@
+<header class="page-head">
+  <h1>Accounts</h1>
+  <p class="sub">The chart of accounts — declared or already used by a posting. Unknown-account policy: <strong><%= @policy %></strong></p>
+</header>
+
+<form class="inline" method="post" action="/accounts/add">
+  <label>Declare accounts <input name="names" placeholder="Expenses:Food:Coffee Assets:Brokerage" size="40" required></label>
+  <button type="submit">Add</button>
+</form>
+
+<% if @rows.empty? %>
+  <p class="empty">No accounts yet.</p>
+<% else %>
+  <table class="ledger">
+    <thead><tr><th>Account</th><th>Metadata</th><th class="num-col">Balance</th></tr></thead>
+    <tbody>
+    <% @rows.each do |row| %>
+      <tr<%= row.used? ? "" : %( class="unused") %>>
+        <td><a href="<%= url "/register", account: row.name %>"><%= h row.name %></a><% unless row.used? %> <span class="tag">unused</span><% end %></td>
+        <td class="meta"><% row.meta.to_a.sort_by { |(k, _)| k }.each do |(k, v)| %><span class="kv"><%= h k %>=<%= h v %></span> <% end %></td>
+        <td class="num-col"><%= money row.balance %></td>
+      </tr>
+    <% end %>
+    </tbody>
+  </table>
+  <p class="hint">Metadata (apr, limit, due-day, …) and renames are set from the command line: <code>finfry accounts set</code>, <code>finfry accounts rename</code>.</p>
+<% end %>

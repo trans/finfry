@@ -1,0 +1,54 @@
+<header class="page-head">
+  <h1>Register</h1>
+  <p class="sub"><% if a = @view.account %>Account view of <strong><%= h a %></strong>, with running balance<% else %>Every transaction, oldest first<% end %></p>
+</header>
+
+<form class="filters" method="get" action="/register">
+  <label>Account
+    <input list="accounts" name="account" value="<%= param "account" %>" placeholder="any">
+  </label>
+  <label>Month <input type="month" name="month" value="<%= param "month" %>"></label>
+  <label>From <input type="date" name="since" value="<%= param "since" %>"></label>
+  <label>To <input type="date" name="until" value="<%= param "until" %>"></label>
+  <label>Min <input name="min" value="<%= param "min" %>" size="7" inputmode="decimal"></label>
+  <label>Max <input name="max" value="<%= param "max" %>" size="7" inputmode="decimal"></label>
+  <label>Memo <input name="q" value="<%= param "q" %>" placeholder="contains…"></label>
+  <label>Last <input name="limit" value="<%= param "limit" %>" size="4" inputmode="numeric"></label>
+  <button type="submit">Filter</button>
+  <a class="button quiet" href="/register">Clear</a>
+</form>
+<datalist id="accounts"><%= account_options @accounts %></datalist>
+
+<% if @view.empty? %>
+  <p class="empty">No transactions match. <a href="/record">Record an entry</a> or clear the filters.</p>
+<% elsif account = @view.account %>
+  <table class="ledger">
+    <thead><tr><th>#</th><th>Date</th><th>Memo</th><th class="num-col">Amount</th><th class="num-col running">Balance</th></tr></thead>
+    <tbody>
+    <% @view.rows.each do |row| t = row.txn %>
+      <tr>
+        <td class="id"><%= t.id %></td>
+        <td class="date"><%= t.date %></td>
+        <td><%= h t.description %><% if t.recurrence %> <span class="tag"><%= t.recurrence %></span><% end %></td>
+        <td class="num-col"><%= money row.leg.not_nil! %></td>
+        <td class="num-col running"><%= money row.running.not_nil! %></td>
+      </tr>
+    <% end %>
+    </tbody>
+  </table>
+<% else %>
+  <table class="ledger">
+    <thead><tr><th>#</th><th>Date</th><th>Memo</th><th>Postings</th><th class="num-col">Amount</th></tr></thead>
+    <tbody>
+    <% @view.rows.each do |row| t = row.txn %>
+      <tr>
+        <td class="id"><%= t.id %></td>
+        <td class="date"><%= t.date %></td>
+        <td><%= h t.description %><% if t.recurrence %> <span class="tag"><%= t.recurrence %></span><% end %></td>
+        <td class="postings"><% t.postings.each do |p| %><div><a href="<%= url "/register", account: p.account %>"><%= h p.account %></a></div><% end %></td>
+        <td class="num-col postings"><% t.postings.each do |p| %><div><%= money p.amount %></div><% end %></td>
+      </tr>
+    <% end %>
+    </tbody>
+  </table>
+<% end %>

@@ -254,6 +254,32 @@ Notes:
 - Set `FINFRY_DATA` in the server's env if you want it pointed at a specific
   ledger.
 
+### Web UI
+
+`finfry serve` opens the same book in a browser — every report and the
+register as pages, plus forms for the entry commands and the two stage-then-
+commit workflows (due queue, reconciliation), which are where clicking beats
+typing:
+
+```sh
+finfry serve            # http://127.0.0.1:4747 (Ctrl-C to stop)
+finfry serve -p 8080 -o # another port, and open it in your browser
+```
+
+It is a plain multi-page app: pages are rendered server-side, forms POST and
+redirect, and a few lines of JavaScript let the due and reconcile pages save a
+toggle without a reload (everything still works with JS off). Every write goes
+through the same command path as the CLI, so the account policy, the balance
+guards and the undo journal apply exactly as on the command line — the
+command's own output shows as a note on the next page. Unknown accounts under
+`guard` are rejected (there's no prompt to answer); declare them first on the
+Accounts page.
+
+The server re-reads the book whenever another process writes it, so you can
+keep using the CLI or an MCP session alongside it. It binds `127.0.0.1` only and
+has no authentication — it's for you, on your machine. Splits (`add`), account
+metadata/renames and recurring-rule definitions stay CLI-only for now.
+
 ### Manual entry
 
 ```sh
@@ -299,6 +325,7 @@ finfry redo                                            # bring back the change u
 finfry init [dir]                                      # create a per-directory book
 finfry path                                            # print the active ledger file
 finfry version                                         # print the finfry version
+finfry serve [-p 4747] [-o]                            # web UI for this book (local only)
 
 # Reconcile an account against a bank/card statement (account always comes first)
 finfry reconcile Assets:Checking                       # working list + cleared/ledger balances
@@ -396,6 +423,12 @@ Layout:
   tools, reusing the same registry and executor as the built-in agent
 - `src/finfry/app.cr` — Jargon CLI definition and command handlers; the shared
   `commit`/`render`/`postings_for` core that the manual and AI entry paths share
+- `src/finfry/queries.cr` — the read side split from its rendering: view structs
+  (`RegisterView`, `IncomeStatement`, `ReconcileView`, …) and the `App` query
+  methods that build them, shared by the CLI renderers and the web pages
+- `src/finfry/web.cr` + `src/finfry/web/` — the web UI: an `HTTP::Server`
+  router, ECR page templates, and the stylesheet/script (compiled into the
+  binary, so `finfry serve` is self-contained)
 - `src/cli.cr` — executable entry point
 
 ## Roadmap

@@ -1,0 +1,42 @@
+<header class="page-head">
+  <h1>Daily cost</h1>
+  <p class="sub">Each recurring commitment amortized to what it costs per day</p>
+</header>
+
+<% if @report.empty? %>
+  <p class="empty">No recurring items yet. Tag an entry with a cadence when you record it (monthly, yearly, …) and it shows up here.</p>
+<% else %>
+  <% unless @report.expenses.empty? %>
+  <section class="card">
+    <h2>Recurring expenses</h2>
+    <table class="ledger">
+      <thead><tr><th>Item</th><th>Cadence</th><th class="num-col">Per period</th><th class="num-col running">Per day</th></tr></thead>
+      <tbody>
+      <% @report.expenses.each do |i| %>
+        <tr><td><%= h i.label %></td><td><span class="tag"><%= i.recurrence %></span></td><td class="num-col"><%= money i.amount %></td><td class="num-col running"><%= money i.per_day %></td></tr>
+      <% end %>
+      <tr class="total"><th>Total</th><td></td><td class="num-col muted"><%= money(@report.expense_per_day * Finfry::Recurrence::AVG_MONTH) %>/mo · <%= money(@report.expense_per_day * Finfry::Recurrence::AVG_YEAR) %>/yr</td><td class="num-col running"><%= money @report.expense_per_day %></td></tr>
+      </tbody>
+    </table>
+  </section>
+  <% end %>
+
+  <% unless @report.incomes.empty? %>
+  <section class="card">
+    <h2>Recurring income</h2>
+    <table class="ledger">
+      <thead><tr><th>Item</th><th>Cadence</th><th class="num-col">Per period</th><th class="num-col running">Per day</th></tr></thead>
+      <tbody>
+      <% @report.incomes.each do |i| %>
+        <tr><td><%= h i.label %></td><td><span class="tag"><%= i.recurrence %></span></td><td class="num-col"><%= money i.amount %></td><td class="num-col running"><%= money i.per_day %></td></tr>
+      <% end %>
+      <tr class="total"><th>Total</th><td></td><td class="num-col muted"><%= money(@report.income_per_day * Finfry::Recurrence::AVG_MONTH) %>/mo · <%= money(@report.income_per_day * Finfry::Recurrence::AVG_YEAR) %>/yr</td><td class="num-col running"><%= money @report.income_per_day %></td></tr>
+      </tbody>
+    </table>
+  </section>
+  <% end %>
+
+  <% if !@report.expenses.empty? && !@report.incomes.empty? %>
+    <p class="check <%= @report.net_per_day >= 0 ? "ok" : "off" %>">Net <%= money @report.net_per_day %>/day &nbsp;<span class="muted"><%= money(@report.net_per_day * Finfry::Recurrence::AVG_MONTH) %>/mo · <%= money(@report.net_per_day * Finfry::Recurrence::AVG_YEAR) %>/yr</span></p>
+  <% end %>
+<% end %>

@@ -1,0 +1,23 @@
+<header class="page-head">
+  <h1>Recurring</h1>
+  <p class="sub">Rules that generate occurrences for the <a href="/due">due queue</a>. Nothing posts until you approve it.</p>
+</header>
+
+<% if @rules.empty? %>
+  <p class="empty">No recurring rules. Add one from the command line: <code>finfry recurring add 15.49 Expenses:Subscriptions -m Netflix -e monthly</code>.</p>
+<% else %>
+  <table class="ledger">
+    <thead><tr><th>#</th><th>Cadence</th><th>Next</th><th>Rule</th><th></th></tr></thead>
+    <tbody>
+    <% @rules.each do |rule| %>
+      <tr<%= rule.active ? "" : %( class="unused") %>>
+        <td class="id"><%= rule.id %></td>
+        <td><span class="tag"><%= rule.cadence %></span></td>
+        <td class="date"><%= rule.next_date %></td>
+        <td><%= h @app.label(rule) %><% unless rule.active %> <span class="tag">off</span><% end %></td>
+        <td class="actions"><% if rule.active %><form method="post" action="/recurring/off"><input type="hidden" name="id" value="<%= rule.id %>"><button class="quiet small" type="submit">Turn off</button></form><% end %></td>
+      </tr>
+    <% end %>
+    </tbody>
+  </table>
+<% end %>

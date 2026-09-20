@@ -13,8 +13,25 @@ module Finfry
 
     @current_changeset : Changeset? = nil
 
+    # Modification time of the file as of our last load or write, so `refresh`
+    # can tell whether another process has written it since.
+    @mtime : Time? = nil
+
     def initialize(@path : String = Store.default_path)
       @db = load
+    end
+
+    # Re-read the ledger if it changed on disk since we last loaded or saved
+    # it, so a long-running process (`finfry serve`) sees edits made by the CLI
+    # or an MCP session on the same book. Returns true if it reloaded.
+    def refresh : Bool
+      return false if mtime == @mtime
+      @db = load
+      true
+    end
+
+    private def mtime : Time?
+      File.info?(@path).try(&.modification_time)
     end
 
     # The visible per-directory book file. finfry discovers it by walking up from
@@ -48,6 +65,7 @@ module Finfry
     end
 
     private def load : Database
+      @mtime = mtime
       return Database.new unless File.exists?(@path)
 
       raw = JSON.parse(File.read(@path))
@@ -74,6 +92,7 @@ module Finfry
       tmp = "#{@path}.tmp"
       File.write(tmp, db.to_pretty_json)
       File.rename(tmp, @path) # atomic on the same filesystem
+      @mtime = mtime
     end
 
     private def backup! : Nil

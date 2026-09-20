@@ -1,0 +1,88 @@
+<header class="page-head">
+  <h1>Overview</h1>
+  <p class="sub">As of <%= @today %></p>
+</header>
+
+<section class="equation<%= @sheet.balanced? ? "" : " off" %>" aria-label="Accounting equation">
+  <div class="term"><span class="word">Assets</span><span class="figure"><%= money @sheet.total_assets %></span></div>
+  <div class="op">=</div>
+  <div class="term"><span class="word">Liabilities</span><span class="figure"><%= money @sheet.total_liabilities %></span></div>
+  <div class="op">+</div>
+  <div class="term"><span class="word">Equity</span><span class="figure"><%= money @sheet.total_equity %></span></div>
+  <div class="verdict">
+    <% if @sheet.balanced? %>
+      <span class="tick">✓</span> The books balance
+    <% else %>
+      <span class="warn">⚠</span> Off by <%= money @sheet.discrepancy %> — the ledger may be tampered
+    <% end %>
+    · <a href="/balance-sheet">balance sheet</a>
+  </div>
+</section>
+
+<div class="cols">
+  <section class="card">
+    <h2>This month <span class="muted"><%= @statement.month %></span></h2>
+    <% if @statement.empty? %>
+      <p class="empty">Nothing recorded yet this month. <a href="/record">Record an entry</a>.</p>
+    <% else %>
+      <table class="ledger compact">
+        <tr><th>Income</th><td class="num-col"><%= money @statement.total_income %></td></tr>
+        <tr><th>Expenses</th><td class="num-col"><%= money @statement.total_expenses %></td></tr>
+        <tr class="total"><th>Net</th><td class="num-col"><%= money @statement.net %></td></tr>
+      </table>
+      <p class="more"><a href="<%= url "/income", month: @statement.month %>">Full income statement</a></p>
+    <% end %>
+  </section>
+
+  <section class="card">
+    <h2>Due</h2>
+    <% if @due > 0 %>
+      <p class="big"><%= @due %> <span class="muted"><%= @due == 1 ? "occurrence" : "occurrences" %> awaiting review</span></p>
+      <p class="more"><a class="button" href="/due">Review what's due</a></p>
+    <% else %>
+      <p class="empty">Nothing due. Recurring rules generate occurrences here for you to approve.</p>
+    <% end %>
+  </section>
+</div>
+
+<% unless @budgets.empty? %>
+<section class="card">
+  <h2>Budgets <span class="muted"><%= @statement.month %></span></h2>
+  <table class="ledger">
+    <thead><tr><th>Account</th><th class="num-col">Spent</th><th class="num-col">Limit</th><th class="num-col">Remaining</th></tr></thead>
+    <tbody>
+    <% @budgets.each do |b| %>
+      <tr<%= b.over? ? %( class="over") : "" %>>
+        <td><%= h b.account %></td>
+        <td class="num-col"><%= money b.spent %></td>
+        <td class="num-col"><%= money b.limit %></td>
+        <td class="num-col"><%= money b.remaining %><% if b.over? %> <span class="flag">over</span><% end %></td>
+      </tr>
+    <% end %>
+    </tbody>
+  </table>
+</section>
+<% end %>
+
+<section class="card">
+  <h2>Recent entries</h2>
+  <% if @recent.empty? %>
+    <p class="empty">The register is empty. <a href="/record">Record your first entry</a>.</p>
+  <% else %>
+    <table class="ledger">
+      <thead><tr><th>#</th><th>Date</th><th>Memo</th><th>Postings</th><th class="num-col">Amount</th></tr></thead>
+      <tbody>
+      <% @recent.each do |row| t = row.txn %>
+        <tr>
+          <td class="id"><%= t.id %></td>
+          <td class="date"><%= t.date %></td>
+          <td><%= h t.description %><% if t.recurrence %> <span class="tag"><%= t.recurrence %></span><% end %></td>
+          <td class="postings"><% t.postings.each do |p| %><div><%= h p.account %></div><% end %></td>
+          <td class="num-col postings"><% t.postings.each do |p| %><div><%= money p.amount %></div><% end %></td>
+        </tr>
+      <% end %>
+      </tbody>
+    </table>
+    <p class="more"><a href="/register">Full register</a></p>
+  <% end %>
+</section>

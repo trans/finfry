@@ -1,0 +1,36 @@
+<header class="page-head">
+  <h1>Budgets</h1>
+  <p class="sub">Monthly limits per account, rolled up over the subtree, against <strong><%= @month %></strong></p>
+</header>
+
+<div class="filters-row">
+  <form class="filters" method="get" action="/budgets">
+    <label>Month <input type="month" name="month" value="<%= @month %>"></label>
+    <button type="submit">Show</button>
+  </form>
+  <form class="inline" method="post" action="/budgets/set">
+    <label>Account <input list="accounts" name="account" required></label>
+    <label>Limit <input name="amount" size="8" inputmode="decimal" required></label>
+    <button type="submit">Set budget</button>
+  </form>
+</div>
+<datalist id="accounts"><%= account_options @accounts %></datalist>
+
+<% if @rows.empty? %>
+  <p class="empty">No budgets set. Set one above to track spending against a monthly limit.</p>
+<% else %>
+  <table class="ledger">
+    <thead><tr><th>Account</th><th class="num-col">Spent</th><th class="num-col">Limit</th><th class="num-col running">Remaining</th><th></th></tr></thead>
+    <tbody>
+    <% @rows.each do |b| %>
+      <tr<%= b.over? ? %( class="over") : "" %>>
+        <td><a href="<%= url "/register", account: b.account, month: @month %>"><%= h b.account %></a></td>
+        <td class="num-col"><%= money b.spent %></td>
+        <td class="num-col"><%= money b.limit %></td>
+        <td class="num-col running"><%= money b.remaining %><% if b.over? %> <span class="flag">over</span><% end %></td>
+        <td class="actions"><form method="post" action="/budgets/rm"><input type="hidden" name="account" value="<%= h b.account %>"><button class="quiet small" type="submit">Remove</button></form></td>
+      </tr>
+    <% end %>
+    </tbody>
+  </table>
+<% end %>

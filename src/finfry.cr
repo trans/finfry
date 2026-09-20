@@ -1,5 +1,6 @@
 require "./finfry/app"
 require "./finfry/mcp"
+require "./finfry/web"
 
 # Finfry is a small command-line budget & expense tracker built on the Jargon
 # CLI shard. This file is the library entry point; the executable lives in

@@ -1,0 +1,27 @@
+<header class="page-head">
+  <h1>History</h1>
+  <p class="sub">Every change to the books, newest first. Undo removes the latest outright; reversing an older one posts a correcting entry.</p>
+</header>
+
+<div class="bar">
+  <form method="post" action="/undo"><button type="submit"<%= @rows.empty? ? " disabled" : "" %>>Undo latest</button></form>
+  <form method="post" action="/redo"><button type="submit" class="quiet"<%= @redo_empty ? " disabled" : "" %>>Redo</button></form>
+</div>
+
+<% if @rows.empty? %>
+  <p class="empty">No history yet.</p>
+<% else %>
+  <table class="ledger">
+    <thead><tr><th>#</th><th>When</th><th>Change</th><th></th></tr></thead>
+    <tbody>
+    <% @rows.each do |row| cs = row.changeset %>
+      <tr<%= row.reversed? ? %( class="unused") : "" %>>
+        <td class="id"><%= cs.id %></td>
+        <td class="date"><%= cs.at %></td>
+        <td><%= h cs.summary %><% if row.reversed? %> <span class="tag">reversed</span><% elsif cs.reversal? %> <span class="tag">correction</span><% end %></td>
+        <td class="actions"><% if !row.reversed? && !cs.reversal? %><form method="post" action="/undo"><input type="hidden" name="id" value="<%= cs.id %>"><button class="quiet small" type="submit">Reverse</button></form><% end %></td>
+      </tr>
+    <% end %>
+    </tbody>
+  </table>
+<% end %>
