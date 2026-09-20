@@ -1020,8 +1020,17 @@ module Finfry
       Web.new(@store, host, port).run do |url|
         puts "finfry serving #{@store.path}"
         puts "  #{url}  (Ctrl-C to stop)"
-        Process.new("xdg-open", [url]) if r["open"]?.try(&.as_bool) rescue nil
+        open_in_browser(url) if r["open"]?.try(&.as_bool)
       end
+    end
+
+    # Best effort: the platform's opener, if it has one. Never fatal — the URL
+    # is printed either way.
+    private def open_in_browser(url : String) : Nil
+      opener = {% if flag?(:darwin) %} "open" {% else %} "xdg-open" {% end %}
+      Process.new(opener, [url], output: Process::Redirect::Close, error: Process::Redirect::Close)
+    rescue
+      nil
     end
 
     private def cmd_undo(r : Jargon::Result) : Nil

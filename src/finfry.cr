@@ -6,5 +6,5 @@ require "./finfry/web"
 # CLI shard. This file is the library entry point; the executable lives in
 # `src/cli.cr`. See `finfry --help` for available commands.
 module Finfry
-  VERSION = "0.2.0"
+  VERSION = "0.3.0"
 end
