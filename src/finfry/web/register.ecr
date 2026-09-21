@@ -1,28 +1,26 @@
 <header class="page-head">
-  <h1>Register</h1>
-  <p class="sub"><% if a = @view.account %>Account view of <strong><%= h a %></strong>, with running balance<% else %>Transactions, newest first<% end %>
-    <% if m = @month %> · <span class="month-nav"><a href="<%= query_with "month", prev_month(m) %>" aria-label="Previous month">‹</a> <strong><%= m %></strong> <a href="<%= query_with "month", next_month(m) %>" aria-label="Next month">›</a></span> · <a href="<%= query_with "all", "1" %>">all time</a><% end %>
-  </p>
+  <h1>Register<% if a = @view.account %> <span class="muted"><%= h a %></span><% end %></h1>
+  <p class="sub"><% if @view.account %>Account view with running balance<% else %>Transactions, newest first<% end %><% if @since || @until %> · <%= h(@since || "…") %> – <%= h(@until || "…") %> · <a href="<%= url "/register", account: @view.account, all: "1" %>">all time</a><% else %> · all time<% end %></p>
 </header>
 
 <form class="filters" method="get" action="/register">
   <label>Account
-    <input list="accounts" name="account" value="<%= param "account" %>" placeholder="any">
+    <select name="account">
+      <option value="">Any account</option>
+      <%= account_filter_options %>
+    </select>
   </label>
-  <label>Month <input type="month" name="month" placeholder="YYYY-MM" pattern="[0-9]{4}-[0-9]{2}" title="Month as YYYY-MM" value="<%= h(@month || "") %>"></label>
-  <label>From <input type="date" name="since" value="<%= param "since" %>"></label>
-  <label>To <input type="date" name="until" value="<%= param "until" %>"></label>
+  <label>From <input type="date" name="since" value="<%= h(@since || "") %>"></label>
+  <label>To <input type="date" name="until" value="<%= h(@until || "") %>"></label>
+  <label>Memo <input name="q" value="<%= param "q" %>" placeholder="contains…"></label>
   <label>Min <input name="min" value="<%= param "min" %>" size="7" inputmode="decimal"></label>
   <label>Max <input name="max" value="<%= param "max" %>" size="7" inputmode="decimal"></label>
-  <label>Memo <input name="q" value="<%= param "q" %>" placeholder="contains…"></label>
-  <label>Last <input name="limit" value="<%= param "limit" %>" size="4" inputmode="numeric"></label>
   <button type="submit">Filter</button>
-  <a class="button quiet" href="/register?all=1">All time</a>
+  <a class="button quiet" href="/register">This month</a>
 </form>
-<datalist id="accounts"><%= account_options @accounts %></datalist>
 
 <% if @view.empty? %>
-  <p class="empty">No transactions match. <a href="/record">Record an entry</a>, or <a href="/register?all=1">show all time</a>.</p>
+  <p class="empty">No transactions match. <a href="/record">Record an entry</a>, or <a href="<%= url "/register", account: @view.account, all: "1" %>">show all time</a>.</p>
 <% elsif account = @view.account %>
   <table class="ledger">
     <thead><tr><th>#</th><th>Date</th><th>Memo</th><th class="num-col">Amount</th><th class="num-col running">Balance</th></tr></thead>

@@ -106,23 +106,27 @@ module Finfry
       ).to_s)
     end
 
-    # With no filter at all the page shows the current month (all-time,
+    # With no date filter the page shows the current month (all-time,
     # oldest-first is the CLI's default, and the right one for a pipe, but a
-    # page wants the recent past); `?all=1` or any explicit filter widens it.
+    # page wants the recent past); `?all=1` widens it. A `month` from a
+    # report link becomes the same From/To range the form shows.
     private def page_register(c : Ctx) : Nil
-      filtered = {"account", "month", "since", "until", "min", "max", "q", "limit", "all"}.any? { |k| c[k]?.presence }
-      month = c["month"]?.presence || (filtered ? nil : current_month)
+      since = c["since"]?.presence
+      until_date = c["until"]?.presence
+      if (since.nil? && until_date.nil?) && !c["all"]?.presence
+        month = c["month"]?.presence || current_month
+        since, until_date = month_bounds(month)
+      end
       view = @app.register(
         account: c["account"]?.presence,
-        month: month,
-        since: c["since"]?.presence,
-        until_date: c["until"]?.presence,
+        since: since,
+        until_date: until_date,
         min: c["min"]?.presence.try { |m| Money.parse(m) },
         max: c["max"]?.presence.try { |m| Money.parse(m) },
         match: c["q"]?.presence,
         limit: c["limit"]?.presence.try(&.to_i?),
       )
-      c.html render(c, "Register", "register", RegisterPage.new(view, c.params, account_names, month).to_s)
+      c.html render(c, "Register", "register", RegisterPage.new(view, c.params, account_filter_options, since, until_date).to_s)
     end
 
     private def page_balances(c : Ctx) : Nil
@@ -382,6 +386,25 @@ module Finfry
       @store.known_accounts
     end
 
+    # Every account plus every parent node (`Expenses`, `Expenses:Food`), so
+    # the register can be filtered to a subtree from a dropdown.
+    private def account_filter_options : Array(String)
+      names = Set(String).new
+      @store.known_accounts.each do |a|
+        parts = a.split(':')
+        (1..parts.size).each { |n| names << parts[0, n].join(':') }
+      end
+      names.to_a.sort
+    end
+
+    # First and last day of a "YYYY-MM" month.
+    private def month_bounds(month : String) : {String, String}
+      first = Time.parse(month, "%Y-%m", Time::Location::UTC)
+      {first.to_s("%Y-%m-%d"), first.shift(months: 1).shift(days: -1).to_s("%Y-%m-%d")}
+    rescue Time::Format::Error
+      raise Error.new("invalid month #{month.inspect} (expected YYYY-MM)")
+    end
+
     private def render(c : Ctx, title : String, active : String, body : String) : String
       Layout.new(title, active, body, @store.path, @store.due_entries.size, c.flash, !@dev_notes.nil?).to_s
     end
@@ -603,14 +626,14 @@ module Finfry
     class RegisterPage
       include Helpers
 
-      def initialize(@view : RegisterView, @params : HTTP::Params, @accounts : Array(String), @month : String?)
+      def initialize(@view : RegisterView, @params : HTTP::Params, @accounts : Array(String),
+                     @since : String?, @until : String?)
       end
 
-      # The current query with one parameter replaced — for the month arrows.
-      def query_with(name : String, value : String) : String
-        q = @params.dup
-        q[name] = value
-        "/register?#{q}"
+      # Full names: sorted, they already read as a hierarchy, and the closed
+      # select stays unambiguous.
+      def account_filter_options : String
+        account_options(@accounts, @params["account"]?)
       end
 
       def param(name : String) : String

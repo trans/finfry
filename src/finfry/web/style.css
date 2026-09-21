@@ -83,6 +83,7 @@ code { font-family: var(--mono); font-size: .9em; background: var(--paper-2); pa
   background: var(--paper-2);
   display: flex; flex-direction: column;
 }
+.brand, .book { flex-shrink: 0; }
 .brand { font-family: var(--serif); font-size: 1.55rem; letter-spacing: .01em; color: var(--ink); }
 .brand:hover { text-decoration: none; }
 .book {
@@ -315,3 +316,6 @@ html.js .nojs-only { display: none; }
 .statement-strip .starting { margin-left: auto; font-size: .85rem; }
 .ledger tr.later td { color: var(--ink-2); }
 .ledger tr.later .num { opacity: .7; }
+
+.card-sub { margin: -6px 0 10px; font-size: .85rem; color: var(--ink-2); }
+select[name="account"] { max-width: 260px; }

@@ -1108,8 +1108,11 @@ describe "Finfry::Web register defaults" do
       body.should contain("all time")
       _, _, body = web_request(web, "GET", "/register?all=1")
       body.should contain("ancient")
-      _, _, body = web_request(web, "GET", "/register?q=anc")
+      _, _, body = web_request(web, "GET", "/register?since=2019-01-01") # an explicit range widens it
       body.should contain("ancient")
+      _, _, body = web_request(web, "GET", "/register?month=2020-01") # a report link's month → that range
+      body.should contain("ancient")
+      body.should contain(%(value="2020-01-31"))
     end
   end
 end

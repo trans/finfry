@@ -21,17 +21,14 @@
 
 <div class="cols">
   <section class="card">
-    <h2>This month <span class="muted"><%= @statement.month %></span></h2>
-    <% if @statement.empty? %>
-      <p class="empty">Nothing recorded yet this month. <a href="/record">Record an entry</a>.</p>
-    <% else %>
-      <table class="ledger compact">
-        <tr><th>Income</th><td class="num-col"><%= money @statement.total_income %></td></tr>
-        <tr><th>Expenses</th><td class="num-col"><%= money @statement.total_expenses %></td></tr>
-        <tr class="total"><th>Net</th><td class="num-col"><%= money @statement.net %></td></tr>
-      </table>
-      <p class="more"><a href="<%= url "/income", month: @statement.month %>">Full income statement</a></p>
-    <% end %>
+    <h2>Month to date <span class="muted"><%= @statement.month %></span></h2>
+    <p class="card-sub">Income and expenses recorded so far this month.</p>
+    <table class="ledger compact">
+      <tr><th>Income</th><td class="num-col"><%= money @statement.total_income %></td></tr>
+      <tr><th>Expenses</th><td class="num-col"><%= money @statement.total_expenses %></td></tr>
+      <tr class="total"><th>Net</th><td class="num-col"><%= money @statement.net %></td></tr>
+    </table>
+    <p class="more"><a href="<%= url "/income", month: @statement.month %>">Full income statement</a></p>
   </section>
 
   <section class="card">
