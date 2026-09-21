@@ -1255,3 +1255,48 @@ describe "Finfry::App#general_ledger" do
     end
   end
 end
+
+describe Finfry::Books do
+  it "remembers opened books most-recent first, prunes missing ones, and always lists the global ledger" do
+    a = File.tempname("finfry_book_a", ".json")
+    b = File.tempname("finfry_book_b", ".json")
+    begin
+      File.write(a, "{}")
+      File.write(b, "{}")
+      Finfry::Books.touch(a, Time.local(2026, 9, 21, 9, 0))
+      Finfry::Books.touch(b, Time.local(2026, 9, 21, 10, 0))
+      paths = Finfry::Books.list.map(&.path)
+      paths.first(2).should eq([b, a])
+      paths.should contain(Finfry::Store.global_path)
+      Finfry::Books.find(a).not_nil!.opened_at.should eq("2026-09-21 09:00")
+
+      File.delete(a)
+      Finfry::Books.touch(b) # a write prunes what's gone
+      Finfry::Books.list.map(&.path).should_not contain(a)
+    ensure
+      [a, b].each { |p| File.delete(p) if File.exists?(p) }
+      File.delete(Finfry::Books.registry_path) if File.exists?(Finfry::Books.registry_path)
+    end
+  end
+
+  it "the web switcher opens a registered book and refuses an unknown path" do
+    with_store do |store|
+      other = File.tempname("finfry_other", ".json")
+      begin
+        Finfry::Store.new(other).record("2026-06-01", "elsewhere", expense("Expenses:Food", 100))
+        web = Finfry::Web.new(store)
+        _, headers, _ = web_request(web, "POST", "/book", "path=#{URI.encode_www_form(other)}")
+        URI.decode_www_form(headers["Set-Cookie"]).should contain("error:")
+
+        Finfry::Books.touch(other)
+        _, headers, _ = web_request(web, "POST", "/book", "path=#{URI.encode_www_form(other)}")
+        URI.decode_www_form(headers["Set-Cookie"]).should contain("Opened")
+        _, _, body = web_request(web, "GET", "/register?all=1")
+        body.should contain("elsewhere")
+      ensure
+        File.delete(other) if File.exists?(other)
+        File.delete(Finfry::Books.registry_path) if File.exists?(Finfry::Books.registry_path)
+      end
+    end
+  end
+end

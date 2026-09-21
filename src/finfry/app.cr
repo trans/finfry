@@ -4,6 +4,7 @@ require "./store"
 require "./money"
 require "./recurrence"
 require "./ai"
+require "./books"
 require "./queries"
 
 module Finfry
@@ -15,6 +16,7 @@ module Finfry
     end
 
     def run(argv : Array(String)) : Nil
+      Books.touch(@store.path) # remember this book for `finfry books` / the web switcher
       cli.run(argv) { |result| dispatch(result) }
     rescue ex : Money::Error | Error
       abort_with(ex.message)
@@ -307,6 +309,11 @@ module Finfry
         description: Print the path to the active ledger file
         YAML
 
+      cli.subcommand "books", yaml: <<-YAML
+        type: object
+        description: List the books finfry has opened, most recent first (the active one marked)
+        YAML
+
       cli.subcommand "version", yaml: <<-YAML
         type: object
         description: Print the finfry version
@@ -503,6 +510,7 @@ module Finfry
       when "history"              then cmd_history(result)
       when "init"                 then cmd_init(result)
       when "path"                 then cmd_path(result)
+      when "books"                then cmd_books(result)
       when "version"              then cmd_version(result)
       when "mcp"                  then cmd_mcp(result)
       when "serve"                then cmd_serve(result)
@@ -1039,6 +1047,22 @@ module Finfry
 
     private def cmd_path(r : Jargon::Result) : Nil
       puts @store.path
+    end
+
+    private def cmd_books(r : Jargon::Result) : Nil
+      active = File.expand_path(@store.path)
+      entries = Books.list
+      width = entries.max_of { |e| Books.display(e.path).size }
+      entries.each do |e|
+        mark = e.path == active ? "●" : " "
+        notes = [] of String
+        notes << "active" if e.path == active
+        notes << "global" if e.global?
+        notes << "missing" unless e.exists?
+        opened = e.opened_at.empty? ? "never opened" : "last opened #{e.opened_at}"
+        puts "#{mark} %-#{width}s  %s#{notes.empty? ? "" : "  (#{notes.join(", ")})"}" % {Books.display(e.path), opened}
+      end
+      puts "(use a book: cd into its directory, or FINFRY_DATA=<path>)"
     end
 
     private def cmd_version(r : Jargon::Result) : Nil

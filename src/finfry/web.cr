@@ -3,6 +3,7 @@ require "ecr"
 require "html"
 require "uri"
 require "./app"
+require "./books"
 require "./queries"
 
 module Finfry
@@ -91,6 +92,7 @@ module Finfry
       when {"POST", "/reconcile/mark"}   then post_reconcile_mark(c)
       when {"POST", "/reconcile/commit"} then post_reconcile_commit(c)
       when {"POST", "/undo"}             then post_undo(c)
+      when {"POST", "/book"}             then post_book(c)
       when {"POST", "/redo"}             then perform(c, "redo", {} of String => JSON::Any, "/history")
       else
         c.not_found
@@ -219,6 +221,19 @@ module Finfry
         "recurrence" => txn.recurrence,
         "date"       => txn.date,
       })
+    end
+
+    # Switch the running server to another book — one from the recent-books
+    # registry only, never an arbitrary path from a form. Nothing is copied;
+    # the server just points at the other file from here on.
+    private def post_book(c : Ctx) : Nil
+      entry = Books.find(c["path"])
+      return c.finish(true, "That book isn't in the list — open it once from the command line first.", "/") unless entry
+      return c.finish(true, "#{Books.display(entry.path)} is missing on disk.", "/") unless entry.exists?
+      @store = Store.new(entry.path)
+      @app = App.new(@store, out: STDERR, interactive: false)
+      Books.touch(entry.path)
+      c.finish(false, "Opened #{Books.display(entry.path)}.", "/")
     end
 
     # --- writes ---------------------------------------------------------
@@ -419,7 +434,8 @@ module Finfry
     end
 
     private def render(c : Ctx, title : String, active : String, body : String) : String
-      Layout.new(title, active, body, @store.path, @store.due_entries.size, c.flash, !@dev_notes.nil?).to_s
+      Layout.new(title, active, body, File.expand_path(@store.path), Books.list,
+        @store.due_entries.size, c.flash, !@dev_notes.nil?).to_s
     end
 
     private def today : String
@@ -616,7 +632,17 @@ module Finfry
       include Helpers
 
       def initialize(@title : String, @active : String, @body : String, @book : String,
-                     @due_count : Int32, @flash : Ctx::Flash?, @dev : Bool = false)
+                     @books : Array(Books::Entry), @due_count : Int32, @flash : Ctx::Flash?, @dev : Bool = false)
+      end
+
+      # The recent books as options, the active one selected, missing ones
+      # disabled. Labels are the path with $HOME shortened.
+      def book_options : String
+        @books.map do |e|
+          attrs = e.path == @book ? " selected" : ""
+          attrs += " disabled" if !e.exists?
+          %(<option value="#{h e.path}"#{attrs}>#{h Books.display(e.path)}#{e.global? ? " (global)" : ""}</option>)
+        end.join
       end
 
       def nav(name : String) : String

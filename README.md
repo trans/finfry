@@ -352,6 +352,7 @@ finfry undo 4                                          # reverse an older change
 finfry redo                                            # bring back the change undo just removed
 finfry init [dir]                                      # create a per-directory book
 finfry path                                            # print the active ledger file
+finfry books                                           # books opened before, most recent first
 finfry version                                         # print the finfry version
 finfry serve [-p 4747] [-o]                            # web UI for this book (local only)
 
@@ -410,7 +411,21 @@ A ledger is a single JSON file. finfry finds the active one by, in order:
 3. **The global ledger** at `$XDG_DATA_HOME/finfry/data.json` (typically
    `~/.local/share/finfry/data.json`).
 
-`finfry path` prints whichever is active.
+`finfry path` prints whichever is active, and `finfry books` lists every book
+finfry has opened, most recent first — a registry that fills itself as a side
+effect of use (kept under `$XDG_STATE_HOME/finfry/books.json`, i.e.
+`~/.local/state/finfry/books.json`), so a book you set up months ago is one
+`cd` or `FINFRY_DATA=` away:
+
+```
+$ finfry books
+● ~/Documents/my-money/finfry.json  last opened 2026-09-21 16:26  (active)
+  ~/.local/share/finfry/data.json   last opened 2026-09-21 13:14  (global)
+```
+
+In the web UI the book's path under the brand is a switcher over the same
+list: pick another and the running server opens it (nothing is copied; it only
+opens books already in the list, never an arbitrary path).
 
 Create a per-directory book with `finfry init` (defaults to the current
 directory; pass a path to use another):

@@ -12,7 +12,10 @@
 <div class="shell">
   <nav class="side" aria-label="Sections">
     <a class="brand" href="/">finfry</a>
-    <div class="book" title="<%= h @book %>"><%= h home(@book) %></div>
+    <form method="post" action="/book" class="book-switch" title="<%= h @book %>">
+      <select name="path" aria-label="Book" onchange="this.form.submit()"><%= book_options %></select>
+      <button type="submit" class="nojs-only small quiet">Open</button>
+    </form>
     <ul>
       <li><a href="/"<%= nav "overview" %>>Overview</a></li>
       <li><a href="/register"<%= nav "register" %>>Register</a></li>

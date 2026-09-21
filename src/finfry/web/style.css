@@ -83,14 +83,16 @@ code { font-family: var(--mono); font-size: .9em; background: var(--paper-2); pa
   background: var(--paper-2);
   display: flex; flex-direction: column;
 }
-.brand, .book { flex-shrink: 0; }
+.brand { flex-shrink: 0; }
 .brand { font-family: var(--serif); font-size: 1.55rem; letter-spacing: .01em; color: var(--ink); }
 .brand:hover { text-decoration: none; }
-.book {
-  font-family: var(--mono); font-size: .72rem; color: var(--ink-2);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  margin: 2px 0 20px;
+.book-switch { margin: 4px 0 18px; flex-shrink: 0; }
+.book-switch select {
+  width: 100%; font-family: var(--mono); font-size: .72rem; color: var(--ink-2);
+  background: transparent; border: 1px solid transparent; padding: 2px 4px; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis;
 }
+.book-switch select:hover, .book-switch select:focus { border-color: var(--rule); background: var(--surface); }
 .side ul { list-style: none; margin: 0; padding: 0; flex: 1; }
 .side li.head {
   font-size: .68rem; text-transform: uppercase; letter-spacing: .12em;
