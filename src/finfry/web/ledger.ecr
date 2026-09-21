@@ -25,7 +25,7 @@
     <table class="ledger">
       <thead><tr><th>#</th><th>Date</th><th>Memo</th><th class="num-col">Amount</th><th class="num-col running">Balance</th></tr></thead>
       <tbody>
-        <tr class="carried"><td></td><td></td><td>Balance brought forward</td><td class="num-col"></td><td class="num-col running"><%= money page.opening %></td></tr>
+        <tr class="carried"><td></td><td></td><td>Balance Brought Forward</td><td class="num-col"></td><td class="num-col running"><%= money page.opening %></td></tr>
         <% page.rows.each do |row| t = row.txn %>
         <tr>
           <td class="id"><%= t.id %></td>
@@ -35,7 +35,7 @@
           <td class="num-col running"><%= money row.running.not_nil! %></td>
         </tr>
         <% end %>
-        <tr class="total"><th></th><th></th><th>Closing balance</th><td class="num-col"></td><td class="num-col running"><%= money page.closing %></td></tr>
+        <tr class="total"><th></th><th></th><th>Closing Balance</th><td class="num-col"></td><td class="num-col running"><%= money page.closing %></td></tr>
       </tbody>
     </table>
   </section>

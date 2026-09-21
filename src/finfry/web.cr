@@ -144,7 +144,7 @@ module Finfry
 
     private def page_balances(c : Ctx) : Nil
       prefix = c["prefix"]?.presence
-      c.html render(c, "Balances", "balances", BalancesPage.new(@app.balance_tree(prefix), prefix).to_s)
+      c.html render(c, "Balances", "balances", BalancesPage.new(@app.balance_tree(prefix), prefix, account_filter_options).to_s)
     end
 
     private def page_income(c : Ctx) : Nil
@@ -669,7 +669,7 @@ module Finfry
     class BalancesPage
       include Helpers
 
-      def initialize(@nodes : Array(BalanceNode), @prefix : String?)
+      def initialize(@nodes : Array(BalanceNode), @prefix : String?, @accounts : Array(String))
       end
 
       ECR.def_to_s "#{__DIR__}/web/balances.ecr"

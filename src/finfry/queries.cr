@@ -338,7 +338,9 @@ module Finfry
                               totals : Hash(String, Int64), children : Hash(String, Array(String)),
                               nodes : Array(BalanceNode)) : Nil
       kids = (children[name]? || [] of String).sort
-      if kids.size == 1 && !raw.has_key?(name)
+      # Roots (Assets, Expenses, …) always get their own line and total;
+      # only deeper single-child chains collapse.
+      if depth > 0 && kids.size == 1 && !raw.has_key?(name)
         child = kids.first
         return walk_balances(child, depth, "#{label}:#{child.rpartition(':')[2]}", raw, totals, children, nodes)
       end

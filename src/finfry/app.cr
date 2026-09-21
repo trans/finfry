@@ -899,14 +899,14 @@ module Finfry
       pages.each_with_index do |page, i|
         puts "" if i > 0
         puts page.account
-        puts "  %-4s %-10s  %-28s %13s  %13s" % {"", "", "Balance brought forward", "", Money.format(page.opening)} if page.opening != 0 || r["since"]?
+        puts "  %-4s %-10s  %-28s %13s  %13s" % {"", "", "Balance Brought Forward", "", Money.format(page.opening)} if page.opening != 0 || r["since"]?
         page.rows.each do |row|
           t = row.txn
           memo = t.description
           memo = "#{memo[0, 27]}…" if memo.size > 28
           puts "  #%-4d %s  %-28s %13s  %13s" % {t.id, t.date, memo, Money.format(row.leg.not_nil!), Money.format(row.running.not_nil!)}
         end
-        puts "  %-4s %-10s  %-28s %13s  %13s" % {"", "", "Closing balance", "", Money.format(page.closing)}
+        puts "  %-4s %-10s  %-28s %13s  %13s" % {"", "", "Closing Balance", "", Money.format(page.closing)}
       end
     end
 
@@ -923,10 +923,10 @@ module Finfry
       puts "─" * 40
       puts "Income"
       print_account_lines(statement.income)
-      puts "%-26s  %12s" % {"  Total income", Money.format(statement.total_income)}
+      puts "%-26s  %12s" % {"  Total Income", Money.format(statement.total_income)}
       puts "Expenses"
       print_account_lines(statement.expenses)
-      puts "%-26s  %12s" % {"  Total expenses", Money.format(statement.total_expenses)}
+      puts "%-26s  %12s" % {"  Total Expenses", Money.format(statement.total_expenses)}
       puts "─" * 40
       puts "%-26s  %12s" % {"Net", Money.format(statement.net)}
     end
@@ -945,8 +945,8 @@ module Finfry
 
       puts "Equity"
       sheet.equity.each { |(account, value)| puts "  %-30s  %12s" % {account, Money.format(value)} }
-      puts "  %-30s  %12s" % {"Net income (Income − Expenses)", Money.format(sheet.net_income)}
-      puts "  %-30s  %12s" % {"Total equity", Money.format(sheet.total_equity)}
+      puts "  %-30s  %12s" % {"Net Income (Income − Expenses)", Money.format(sheet.net_income)}
+      puts "  %-30s  %12s" % {"Total Equity", Money.format(sheet.total_equity)}
 
       puts "─" * 48
       rhs = sheet.total_liabilities + sheet.total_equity
@@ -960,7 +960,7 @@ module Finfry
     private def bs_section(label : String, entries : Array({String, Int64}), total : Int64) : Nil
       puts label
       entries.each { |(account, value)| puts "  %-30s  %12s" % {account, Money.format(value)} }
-      puts "  %-30s  %12s" % {"Total #{label.downcase}", Money.format(total)}
+      puts "  %-30s  %12s" % {"Total #{label}", Money.format(total)}
     end
 
     private def cmd_daily(r : Jargon::Result) : Nil

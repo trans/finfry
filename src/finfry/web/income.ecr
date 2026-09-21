@@ -19,12 +19,12 @@
       <% @statement.income.each do |(account, cents)| %>
         <tr><td><a href="<%= url "/register", account: account, month: @statement.month %>"><%= h account %></a></td><td class="num-col"><%= money cents %></td></tr>
       <% end %>
-      <tr class="subtotal"><th>Total income</th><td class="num-col"><%= money @statement.total_income %></td></tr>
+      <tr class="subtotal"><th>Total Income</th><td class="num-col"><%= money @statement.total_income %></td></tr>
       <tr class="section"><th colspan="2">Expenses</th></tr>
       <% @statement.expenses.each do |(account, cents)| %>
         <tr><td><a href="<%= url "/register", account: account, month: @statement.month %>"><%= h account %></a></td><td class="num-col"><%= money cents %></td></tr>
       <% end %>
-      <tr class="subtotal"><th>Total expenses</th><td class="num-col"><%= money @statement.total_expenses %></td></tr>
+      <tr class="subtotal"><th>Total Expenses</th><td class="num-col"><%= money @statement.total_expenses %></td></tr>
       <tr class="total"><th>Net</th><td class="num-col"><%= money @statement.net %></td></tr>
     </tbody>
   </table>

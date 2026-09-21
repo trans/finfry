@@ -1,12 +1,17 @@
 <header class="page-head">
   <h1>Balances</h1>
-  <p class="sub">Net balance of every account<% if p = @prefix %> under <strong><%= h p %></strong><% end %>, with subtotals up the tree</p>
+  <p class="sub">Every account's balance<% if p = @prefix %> under <strong><%= h p %></strong><% end %>, grouped under its parents with their totals</p>
 </header>
 
 <form class="filters" method="get" action="/balances">
-  <label>Subtree <input name="prefix" value="<%= h(@prefix || "") %>" placeholder="e.g. Assets"></label>
-  <button type="submit">Filter</button>
-  <a class="button quiet" href="/balances">Clear</a>
+  <label>Accounts
+    <select name="prefix">
+      <option value="">All accounts</option>
+      <%= account_options @accounts, @prefix %>
+    </select>
+  </label>
+  <button type="submit">Show</button>
+  <a class="button quiet" href="/balances">All</a>
 </form>
 
 <% if @nodes.empty? %>

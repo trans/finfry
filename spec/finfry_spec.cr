@@ -1090,10 +1090,12 @@ describe "Finfry::App#balance_tree" do
         {0, "Assets", 99550_i64, false},
         {1, "Checking", 69550_i64, true},
         {1, "Savings", 30000_i64, true},
-        {0, "Expenses:Food:Coffee", 450_i64, true}, # single-child chain collapsed
-        {0, "Income:Salary", 100000_i64, true},     # credit-normal shown positive
+        {0, "Expenses", 450_i64, false},   # a root always gets its line and total…
+        {1, "Food:Coffee", 450_i64, true}, # …deeper single-child chains collapse
+        {0, "Income", 100000_i64, false},  # credit-normal shown positive
+        {1, "Salary", 100000_i64, true},
       ])
-      nodes[3].name.should eq("Expenses:Food:Coffee") # full path kept for links
+      nodes[4].name.should eq("Expenses:Food:Coffee") # full path kept for links
     end
   end
 end
@@ -1243,8 +1245,8 @@ describe "Finfry::App#general_ledger" do
 
       out, err = Finfry::App.new(store).execute_tool("general_ledger", JSON.parse(%({"prefix":"Assets","since":"2026-09-01"})))
       err.should be_false
-      out.should contain("Balance brought forward")
-      out.should contain("Closing balance")
+      out.should contain("Balance Brought Forward")
+      out.should contain("Closing Balance")
       out.should contain("$480.00")
 
       _, _, body = web_request(Finfry::Web.new(store), "GET", "/ledger?all=1")

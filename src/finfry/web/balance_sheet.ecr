@@ -14,20 +14,20 @@
     <% @sheet.assets.each do |(account, value)| %>
       <tr><td><a href="<%= url "/register", account: account %>"><%= h account %></a></td><td class="num-col"><%= money value %></td></tr>
     <% end %>
-    <tr class="subtotal"><th>Total assets</th><td class="num-col"><%= money @sheet.total_assets %></td></tr>
+    <tr class="subtotal"><th>Total Assets</th><td class="num-col"><%= money @sheet.total_assets %></td></tr>
 
     <tr class="section"><th colspan="2">Liabilities</th></tr>
     <% @sheet.liabilities.each do |(account, value)| %>
       <tr><td><a href="<%= url "/register", account: account %>"><%= h account %></a></td><td class="num-col"><%= money value %></td></tr>
     <% end %>
-    <tr class="subtotal"><th>Total liabilities</th><td class="num-col"><%= money @sheet.total_liabilities %></td></tr>
+    <tr class="subtotal"><th>Total Liabilities</th><td class="num-col"><%= money @sheet.total_liabilities %></td></tr>
 
     <tr class="section"><th colspan="2">Equity</th></tr>
     <% @sheet.equity.each do |(account, value)| %>
       <tr><td><%= h account %></td><td class="num-col"><%= money value %></td></tr>
     <% end %>
-    <tr><td>Net income <span class="muted">(Income − Expenses)</span></td><td class="num-col"><%= money @sheet.net_income %></td></tr>
-    <tr class="subtotal"><th>Total equity</th><td class="num-col"><%= money @sheet.total_equity %></td></tr>
+    <tr><td>Net Income <span class="muted">(Income − Expenses)</span></td><td class="num-col"><%= money @sheet.net_income %></td></tr>
+    <tr class="subtotal"><th>Total Equity</th><td class="num-col"><%= money @sheet.total_equity %></td></tr>
   </tbody>
 </table>
 
