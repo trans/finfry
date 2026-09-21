@@ -153,12 +153,18 @@ module Finfry
       c.html render(c, "Due", "due", DuePage.new(@app.due_queue, @app).to_s)
     end
 
+    # No account: the overview of what needs reconciling. With one: the
+    # statement strip, the working list, and the commit.
     private def page_reconcile(c : Ctx) : Nil
-      account = c["account"]?.presence
+      unless account = c["account"]?.presence
+        return c.html render(c, "Reconcile", "reconcile", ReconcileIndexPage.new(@app.reconcilable_accounts).to_s)
+      end
       statement = c["statement"]?.presence.try { |s| Money.parse(s) }
-      view = account ? @app.reconciliation(account, statement) : nil
-      past = account ? @store.reconciliations(account) : [] of Reconciliation
-      c.html render(c, "Reconcile", "reconcile", ReconcilePage.new(view, past, account_names, c["statement"]?.presence).to_s)
+      as_of = c["as_of"]?.presence
+      view = @app.reconciliation(account, statement, as_of)
+      c.html render(c, "Reconcile", "reconcile", ReconcilePage.new(
+        view, @store.reconciliations(account), c["statement"]?.presence, as_of || @app.next_statement_date(account)
+      ).to_s)
     end
 
     private def page_history(c : Ctx) : Nil
@@ -268,6 +274,7 @@ module Finfry
       unclear = ids - clear
       back = "/reconcile?account=#{URI.encode_www_form(account)}"
       back += "&statement=#{URI.encode_www_form(c["statement"])}" if c["statement"]?.presence
+      back += "&as_of=#{URI.encode_www_form(c["as_of"])}" if c["as_of"]?.presence
 
       {"clear" => clear, "unclear" => unclear}.each do |action, targets|
         next if targets.empty?
@@ -279,11 +286,13 @@ module Finfry
 
       view = @app.reconciliation(account, c["statement"]?.presence.try { |s| Money.parse(s) })
       c.finish(false, "Saved.", back, {
-        "cleared"    => Money.format(view.cleared),
-        "ledger"     => Money.format(view.ledger),
-        "staged"     => view.staged_count,
-        "difference" => view.difference.try { |d| Money.format(d) },
-        "matches"    => view.matches?,
+        "cleared"     => Money.format(view.cleared),
+        "ledger"      => Money.format(view.ledger),
+        "staged"      => view.staged_count,
+        "cleared_out" => Money.format(view.cleared_out),
+        "cleared_in"  => Money.format(view.cleared_in),
+        "difference"  => view.difference.try { |d| Money.format(d) },
+        "matches"     => view.matches?,
       })
     end
 
@@ -295,6 +304,9 @@ module Finfry
         "args"    => list([c["statement"]]),
         "adjust"  => JSON::Any.new(c["adjust"]?.presence ? true : false),
       }
+      if as_of = c["as_of"]?.presence
+        a["as-of"] = JSON::Any.new(as_of)
+      end
       perform(c, "reconcile", a, "/reconcile?account=#{URI.encode_www_form(account)}")
     end
 
@@ -643,10 +655,21 @@ module Finfry
       ECR.def_to_s "#{__DIR__}/web/due.ecr"
     end
 
+    class ReconcileIndexPage
+      include Helpers
+
+      def initialize(@rows : Array(ReconcileSummary))
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/reconcile_index.ecr"
+    end
+
     class ReconcilePage
       include Helpers
 
-      def initialize(@view : ReconcileView?, @past : Array(Reconciliation), @accounts : Array(String), @statement : String?)
+      # `statement` is the balance as typed (kept verbatim for the inputs);
+      # `as_of` is the statement date to show — given, or suggested.
+      def initialize(@view : ReconcileView, @past : Array(Reconciliation), @statement : String?, @as_of : String)
       end
 
       ECR.def_to_s "#{__DIR__}/web/reconcile.ecr"

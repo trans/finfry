@@ -48,8 +48,9 @@ function apply(scope, data) {
     if (!(key in data) || data[key] === null) return;
     if (key === "verdict") return;
     const value = data[key];
-    if (typeof value === "string" && value.startsWith("$") || typeof value === "string" && value.startsWith("-$")) {
-      el.innerHTML = `<span class="num${value.startsWith("-") ? " neg" : ""}">${value}</span>`;
+    if (typeof value === "string" && (value.startsWith("$") || value.startsWith("-$"))) {
+      if (el.classList.contains("num")) el.textContent = value;
+      else el.innerHTML = `<span class="num${value.startsWith("-") ? " neg" : ""}">${value}</span>`;
     } else {
       el.textContent = value;
     }

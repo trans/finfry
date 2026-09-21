@@ -129,12 +129,26 @@ module Finfry
   end
 
   # One not-yet-reconciled transaction on the account's working list.
+  # `amount` is display-signed; `raw` is the posting as booked, whose sign
+  # says which side of a statement the line is on (see `outflow?`).
   struct ReconcileRow
     getter txn : Transaction
     getter amount : Int64
+    getter raw : Int64
     getter? cleared : Bool
 
-    def initialize(@txn, @amount, @cleared)
+    def initialize(@txn, @amount, @raw, @cleared)
+    end
+
+    # A credit to the account: a withdrawal from an asset, a charge on a
+    # liability — the "out" column of its statement.
+    def outflow? : Bool
+      raw < 0
+    end
+
+    # Positive magnitude, for the Out / In columns.
+    def magnitude : Int64
+      raw.abs
     end
   end
 
@@ -146,12 +160,33 @@ module Finfry
     getter last : Reconciliation?
     getter rows : Array(ReconcileRow)
     getter statement : Int64?
+    getter as_of : String? # the statement's closing date, when given
 
-    def initialize(@account, @cleared, @ledger, @last, @rows, @statement)
+    def initialize(@account, @cleared, @ledger, @last, @rows, @statement, @as_of = nil)
     end
 
     def staged_count : Int32
       rows.count(&.cleared?)
+    end
+
+    # What a statement for this kind of account calls its two columns.
+    def column_labels : {String, String}
+      account.starts_with?("Liabilities") ? {"Charges", "Payments"} : {"Withdrawals", "Deposits"}
+    end
+
+    # Staged totals per column, to match a statement's own subtotals.
+    def cleared_out : Int64
+      rows.sum(0_i64) { |r| r.cleared? && r.outflow? ? r.magnitude : 0_i64 }
+    end
+
+    def cleared_in : Int64
+      rows.sum(0_i64) { |r| r.cleared? && !r.outflow? ? r.magnitude : 0_i64 }
+    end
+
+    # A row dated after the statement closed can't be on it (but stays
+    # toggleable — statements and ledgers disagree about dates sometimes).
+    def after_statement?(row : ReconcileRow) : Bool
+      (d = as_of) ? row.txn.date > d : false
     end
 
     # statement − cleared, when a statement was given.
@@ -161,6 +196,19 @@ module Finfry
 
     def matches? : Bool
       difference == 0_i64
+    end
+  end
+
+  # One line of the "what needs reconciling" overview.
+  struct ReconcileSummary
+    getter account : String
+    getter ledger : Int64
+    getter cleared : Int64
+    getter pending : Int32 # working-list size (not yet committed)
+    getter staged : Int32
+    getter last : Reconciliation?
+
+    def initialize(@account, @ledger, @cleared, @pending, @staged, @last)
     end
   end
 
@@ -311,15 +359,34 @@ module Finfry
     # transaction with a posting on the account, staged ones flagged), the
     # cleared balance (committed + staged), the full ledger balance, and — with
     # a statement — the difference to it.
-    def reconciliation(account : String, statement : Int64? = nil) : ReconcileView
+    def reconciliation(account : String, statement : Int64? = nil, as_of : String? = nil) : ReconcileView
+      validate_date!(as_of) if as_of
       cleared = display_cents(account, @store.reconciled_balance(account) + @store.cleared_balance(account))
       ledger = display_cents(account, @store.balances[account]? || 0_i64)
       staged = @store.cleared_ids(account).to_set
       rows = reconcile_working_list(account).map do |t|
-        amount = display_cents(account, t.postings.sum(0_i64) { |p| p.account == account ? p.amount : 0_i64 })
-        ReconcileRow.new(t, amount, staged.includes?(t.id))
+        raw = t.postings.sum(0_i64) { |p| p.account == account ? p.amount : 0_i64 }
+        ReconcileRow.new(t, display_cents(account, raw), raw, staged.includes?(t.id))
       end
-      ReconcileView.new(account, cleared, ledger, @store.last_reconciliation(account), rows, statement)
+      ReconcileView.new(account, cleared, ledger, @store.last_reconciliation(account), rows, statement, as_of)
+    end
+
+    # Every account that has statements to reconcile against (assets and
+    # liabilities in use), with where its reconciliation stands.
+    def reconcilable_accounts : Array(ReconcileSummary)
+      @store.known_accounts.select { |a| funding?(a) && @store.used_accounts.includes?(a) }.map do |a|
+        view = reconciliation(a)
+        ReconcileSummary.new(a, view.ledger, view.cleared, view.rows.size, view.staged_count, view.last)
+      end
+    end
+
+    # A sensible next statement date: a month after the last one, else today.
+    def next_statement_date(account : String) : String
+      if (last = @store.last_reconciliation(account)) && (d = last.statement_date)
+        Recurrence.advance(d, "monthly")
+      else
+        today
+      end
     end
 
     # --- habits: what the book already knows, for smarter defaults -------

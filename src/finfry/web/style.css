@@ -308,3 +308,10 @@ html.js .nojs-only { display: none; }
 .track { height: 6px; background: var(--paper-3); border-radius: 3px; overflow: hidden; margin-top: 7px; border: 1px solid var(--rule); }
 .track .fill { height: 100%; background: var(--pen); }
 .track.over .fill { background: var(--red); }
+
+/* --- reconcile --------------------------------------------------------- */
+
+.statement-strip { padding: 12px 14px; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; }
+.statement-strip .starting { margin-left: auto; font-size: .85rem; }
+.ledger tr.later td { color: var(--ink-2); }
+.ledger tr.later .num { opacity: .7; }

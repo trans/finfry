@@ -1113,3 +1113,62 @@ describe "Finfry::Web register defaults" do
     end
   end
 end
+
+describe "reconciliation statement date" do
+  it "commit --as-of records the statement date separately from when it was finalized" do
+    with_store do |store|
+      a = store.record("2026-08-15", "salary",
+        [Finfry::Posting.new("Assets:Checking", 100000_i64), Finfry::Posting.new("Income:Salary", -100000_i64)])
+      store.set_cleared("Assets:Checking", [a.id], true)
+      app = Finfry::App.new(store)
+      out, err = app.execute_tool("reconcile",
+        JSON.parse(%({"account":"Assets:Checking","action":"commit","args":["1000"],"as-of":"2026-08-31"})))
+      err.should be_false
+      out.should contain("as of 2026-08-31")
+      rec = store.last_reconciliation("Assets:Checking").not_nil!
+      rec.statement_date.should eq("2026-08-31")
+      rec.date.should eq(Time.local.to_s("%Y-%m-%d")) # finalized today
+      rec.as_of.should eq("2026-08-31")
+
+      # a record without a statement date (older ledgers) falls back to the finalized date
+      Finfry::Reconciliation.from_json(%({"account":"A","date":"2026-01-05","statement":1,"transaction_ids":[]})).as_of.should eq("2026-01-05")
+
+      out, _ = app.execute_tool("reconcile", JSON.parse(%({"account":"Assets:Checking","action":"history"})))
+      out.should contain("2026-08-31")
+      out.should contain("finalized")
+
+      expect_raises(Finfry::Error) do
+        app.execute("reconcile", JSON.parse(%({"account":"Assets:Checking","action":"commit","args":["1"],"as-of":"August"}))).tap { |o, e| raise Finfry::Error.new(o) if e }
+      end
+      app.next_statement_date("Assets:Checking").should eq("2026-09-30")
+    end
+  end
+
+  it "the reconcile view splits lines into out/in and flags those after the statement" do
+    with_store do |store|
+      store.record("2026-08-15", "salary",
+        [Finfry::Posting.new("Assets:Checking", 100000_i64), Finfry::Posting.new("Income:Salary", -100000_i64)])
+      store.record("2026-09-02", "rent", expense("Expenses:Rent", 50000))
+      view = Finfry::App.new(store).reconciliation("Assets:Checking", 100000_i64, "2026-08-31")
+      view.rows.map(&.outflow?).should eq([false, true])
+      view.column_labels.should eq({"Withdrawals", "Deposits"})
+      view.after_statement?(view.rows[0]).should be_false
+      view.after_statement?(view.rows[1]).should be_true
+      Finfry::App.new(store).reconciliation("Liabilities:Card").column_labels.should eq({"Charges", "Payments"})
+    end
+  end
+
+  it "the web landing page lists reconcilable accounts and the commit carries the statement date" do
+    with_store do |store|
+      a = store.record("2026-08-15", "salary",
+        [Finfry::Posting.new("Assets:Checking", 100000_i64), Finfry::Posting.new("Income:Salary", -100000_i64)])
+      web = Finfry::Web.new(store)
+      _, _, body = web_request(web, "GET", "/reconcile")
+      body.should contain("Assets:Checking")
+      body.should_not contain("Income:Salary") # not a statement account
+      web_request(web, "POST", "/reconcile/mark", "account=Assets:Checking&ids=#{a.id}&clear=#{a.id}")
+      web_request(web, "POST", "/reconcile/commit", "account=Assets:Checking&statement=1000&as_of=2026-08-31")
+      store.last_reconciliation("Assets:Checking").not_nil!.statement_date.should eq("2026-08-31")
+    end
+  end
+end

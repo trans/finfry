@@ -456,6 +456,7 @@ module Finfry
           action: {type: string, enum: [clear, unclear, balance, commit, history], description: "Stage (clear/unclear <ids>), check (balance <amount>), finalize (commit <amount>), or list past reconciliations (history)"}
           args: {type: array, description: "Transaction ids for clear/unclear (or 'all'); the statement balance for balance/commit"}
           adjust: {type: boolean, description: "With commit: post any small residual to Expenses:ShortsAndOverages so it balances"}
+          "as-of": {type: string, description: "With commit: the statement's closing date YYYY-MM-DD (default today)"}
         required: [account]
         YAML
 
@@ -728,7 +729,7 @@ module Finfry
       when "clear"   then cmd_reconcile_mark(account, args, true)
       when "unclear" then cmd_reconcile_mark(account, args, false)
       when "balance" then cmd_reconcile_status(account, args.first?)
-      when "commit"  then cmd_reconcile_commit(account, args.first?, r["adjust"]?.try(&.as_bool) || false)
+      when "commit"  then cmd_reconcile_commit(account, args.first?, r["adjust"]?.try(&.as_bool) || false, r["as-of"]?.try(&.as_s))
       when "history" then cmd_reconcile_history(account)
       else                cmd_reconcile_status(account, r["statement"]?.try(&.as_s))
       end
@@ -746,7 +747,7 @@ module Finfry
       puts "  ledger balance:   %14s" % Money.format(view.ledger)
 
       if last = view.last
-        puts "  last reconciled:  %14s on %s" % {Money.format(last.statement), last.date}
+        puts "  last reconciled:  %14s as of %s" % {Money.format(last.statement), last.as_of}
       end
 
       unless view.rows.empty?
@@ -776,11 +777,12 @@ module Finfry
     # should be entered manually to their real accounts instead.
     SHORT_OVER_ACCOUNT = "Expenses:ShortsAndOverages"
 
-    private def cmd_reconcile_commit(account : String, statement : String?, adjust : Bool) : Nil
+    private def cmd_reconcile_commit(account : String, statement : String?, adjust : Bool, as_of : String?) : Nil
       unless statement
         puts "commit needs the statement balance: reconcile #{account} commit <balance>"
         return
       end
+      validate_date!(as_of) if as_of
 
       target = Money.parse(statement)
       diff = target - display_cents(account, @store.reconciled_balance(account) + @store.cleared_balance(account))
@@ -799,8 +801,8 @@ module Finfry
         return
       end
 
-      locked = @store.reconcile!(account, target, today)
-      puts "✓ Reconciled #{account} to #{Money.format(target)} as of #{today} (#{locked} transaction(s) locked)."
+      locked = @store.reconcile!(account, target, today, as_of)
+      puts "✓ Reconciled #{account} to #{Money.format(target)} as of #{as_of || today} (#{locked} transaction(s) locked)."
     end
 
     # Post the residual as a normal, balanced, undoable transaction: one leg
@@ -826,7 +828,8 @@ module Finfry
       puts "Reconciliations for #{account}"
       recs.each do |rec|
         n = rec.transaction_ids.size
-        puts "  %s  %14s  (%d txn%s)" % {rec.date, Money.format(rec.statement), n, n == 1 ? "" : "s"}
+        finalized = rec.statement_date ? "  finalized #{rec.date}" : ""
+        puts "  %s  %14s  (%d txn%s)%s" % {rec.as_of, Money.format(rec.statement), n, n == 1 ? "" : "s", finalized}
       end
     end
 

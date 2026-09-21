@@ -154,8 +154,17 @@ are **off by** some amount.
 
 `commit` finalizes: it locks the staged transactions into the reconciled tier —
 but only if the cleared balance matches the statement, so you can never reconcile
-to a wrong number. Each commit is stamped (date + statement) for the audit trail
-and shown as "last reconciled" thereafter.
+to a wrong number. Each commit records the statement it balanced against and is
+shown as "last reconciled" thereafter. Pass `--as-of <date>` with the
+statement's closing date: a reconciliation asserts "as of *this* date the bank
+said the balance was *this*", so the date that matters is the statement's, not
+the day you got around to it (the finalized date is kept too, as an audit stamp):
+
+```
+finfry reconcile Assets:Checking commit 2738.00 --as-of 2026-08-31
+finfry reconcile Assets:Checking history
+#   2026-08-31       $2,738.00  (14 txns)  finalized 2026-09-20
+```
 
 If you're off by a small unexplained amount you can't track down, add `--adjust`:
 
@@ -275,7 +284,12 @@ inferred from the accounts, so any pair works (a card payment, a refund, a
 reclassification). A memo you've used before fills in the blanks from its last
 entry (never what you've typed), account suggestions are ordered by how
 recently you used them, and every note about a change you just made carries an
-**Undo** — which only fires if that change is still the latest. Every write goes
+**Undo** — which only fires if that change is still the latest. Reconcile
+opens on "what needs reconciling" (every asset and liability account with its
+cleared balance and what's outstanding); an account's page follows the
+GnuCash shape — statement date and closing balance first, lines split into
+withdrawals and deposits (charges and payments for a card), the difference to
+the statement front and center, and commit only when it's zero. Every write goes
 through the same command path as the CLI, so the account policy, the balance
 guards and the undo journal apply exactly as on the command line — the
 command's own output shows as a note on the next page. Unknown accounts under
@@ -341,6 +355,7 @@ finfry reconcile Assets:Checking unclear 5             # unstage (or 'all')
 finfry reconcile Assets:Checking balance 2738.00       # check cleared balance against the statement
 finfry reconcile Assets:Checking commit 2738.00        # finalize (locks staged, only if it balances)
 finfry reconcile Assets:Checking commit 2738.00 --adjust   # ...or book a small residual to Shorts&Overages
+finfry reconcile Assets:Checking commit 2738.00 --as-of 2026-08-31   # stamp the statement's closing date
 finfry reconcile Assets:Checking history                # past finalized reconciliations (audit trail)
 
 # Budgets (per account, rolled up over the subtree)

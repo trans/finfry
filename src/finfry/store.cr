@@ -341,12 +341,12 @@ module Finfry
     # Finalize a reconciliation: move every staged-cleared transaction into the
     # committed tier and record the statement it was balanced against. The
     # caller verifies the balance matches first. Returns the number locked in.
-    def reconcile!(account : String, statement : Int64, date : String) : Int32
+    def reconcile!(account : String, statement : Int64, date : String, statement_date : String? = nil) : Int32
       staged = @db.cleared[account]? || [] of Int32
       return 0 if staged.empty?
       committed = (@db.reconciled[account] ||= [] of Int32)
       staged.each { |id| committed << id unless committed.includes?(id) }
-      @db.reconciliations << Reconciliation.new(account, date, statement, staged.dup)
+      @db.reconciliations << Reconciliation.new(account, date, statement, staged.dup, statement_date)
       @db.cleared.delete(account)
       save
       staged.size

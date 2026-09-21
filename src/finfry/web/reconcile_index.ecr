@@ -1,0 +1,24 @@
+<header class="page-head">
+  <h1>Reconcile</h1>
+  <p class="sub">Each account reconciles against its own statement. Pick the one whose statement you have in hand.</p>
+</header>
+
+<% if @rows.empty? %>
+  <p class="empty">No asset or liability accounts in use yet — record something first.</p>
+<% else %>
+  <table class="ledger">
+    <thead><tr><th>Account</th><th class="num-col">Ledger</th><th class="num-col">Cleared</th><th class="num-col">To reconcile</th><th>Last statement</th><th></th></tr></thead>
+    <tbody>
+    <% @rows.each do |r| %>
+      <tr>
+        <td><a href="<%= url "/reconcile", account: r.account %>"><%= h r.account %></a></td>
+        <td class="num-col"><%= money r.ledger %></td>
+        <td class="num-col"><%= money r.cleared %></td>
+        <td class="num-col"><% if r.pending > 0 %><%= r.pending %><% if r.staged > 0 %> <span class="muted">(<%= r.staged %> staged)</span><% end %><% else %><span class="muted">—</span><% end %></td>
+        <td><% if last = r.last %><span class="num"><%= Money.format last.statement %></span> <span class="muted">as of <%= last.as_of %></span><% else %><span class="muted">never</span><% end %></td>
+        <td class="actions"><a class="button small<%= r.pending > 0 ? "" : " quiet" %>" href="<%= url "/reconcile", account: r.account %>">Open</a></td>
+      </tr>
+    <% end %>
+    </tbody>
+  </table>
+<% end %>

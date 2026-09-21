@@ -250,6 +250,10 @@ module Finfry
   # a given date, and the transactions that were locked in by it. `statement` is
   # stored in display orientation (the positive figure the user typed, matching
   # how the statement reads).
+  # Two dates, two facts: `statement_date` is what the reconciliation is
+  # *about* — "as of this date the bank said the balance was `statement`" —
+  # and `date` is when it was finalized (an audit stamp). Older records only
+  # have the latter.
   struct Reconciliation
     include JSON::Serializable
 
@@ -257,8 +261,14 @@ module Finfry
     property date : String # when finalized, YYYY-MM-DD
     property statement : Int64
     property transaction_ids : Array(Int32)
+    property statement_date : String? = nil # the statement's closing date, YYYY-MM-DD
 
-    def initialize(@account, @date, @statement, @transaction_ids)
+    def initialize(@account, @date, @statement, @transaction_ids, @statement_date = nil)
+    end
+
+    # The date the balance assertion is for: the statement date when known.
+    def as_of : String
+      statement_date || date
     end
   end
 
