@@ -79,7 +79,9 @@ works:
 
 `finfry redo` brings back the change `undo` just removed (single level; any new
 change invalidates it). `finfry history` lists changes and marks which have been
-reversed.
+reversed or undone. Change numbers are the log's commit numbers, so they have
+gaps where bookkeeping commits (cleared marks, due staging, rules, metadata)
+sit between ledger changes — `history --all` shows those too.
 
 ### Recurring entries
 
@@ -346,7 +348,7 @@ finfry report balance-sheet [-d 2026-06-30]            # balance sheet + integri
 finfry report daily                                    # per-day cost of recurring items
 finfry report balance [Assets]                         # account balances (also under report)
 finfry accounts                                        # accounts in use
-finfry history [-n 10]                                 # change history
+finfry history [-n 10] [--all]                         # change history (--all: every commit in the log)
 finfry undo                                            # remove the most recent change
 finfry undo 4                                          # reverse an older change (correcting entry)
 finfry redo                                            # bring back the change undo just removed
@@ -403,9 +405,26 @@ integer cents, so there is no floating-point rounding error.
 
 ### Data storage & books
 
-A ledger is a single JSON file. finfry finds the active one by, in order:
+A book is two files with one base name: **`finfry.log`**, the truth — an
+append-only log of every change, as commits of small actions — and
+**`finfry.json`**, a checkpoint of the state those commits fold to, regenerable
+at any time (delete it and the next command rebuilds it from the log). The log
+is a [C0DATA](https://github.com/c0data) stream-mode file kept by the
+[keep](https://github.com/tabcomputing/keep) shard: each commit is one
+crash-safe block, so an interrupted write can never be mistaken for a complete
+one, and several processes (the CLI, `finfry serve`, an MCP session) can write
+to the same book safely. Because nothing is ever erased — `undo` appends a
+mark that the fold skips — the log *is* the backup and the audit trail:
+`finfry history --all` reads it end to end, with who (cli / web / mcp / ai)
+did what, when, and why.
 
-1. **`FINFRY_DATA`** — an explicit path override.
+An older single-file book is migrated the first time it's opened: its journal
+becomes commits, the rest of its state one `migrated` commit, and the original
+is kept beside them as `finfry.json.pre-log`.
+
+finfry finds the active book by, in order:
+
+1. **`FINFRY_DATA`** — an explicit path override (the `.json`; the log sits beside it).
 2. **The nearest `finfry.json`** found by walking up from the current directory
    (like git's `.git`) — this is a per-directory *book*.
 3. **The global ledger** at `$XDG_DATA_HOME/finfry/data.json` (typically
@@ -444,12 +463,13 @@ directory gets AI access to *that book only*, with no per-book setup. (Pass
 Without a book in scope, finfry uses the global ledger, so casual single-book use
 still works anywhere.
 
-Writes are atomic (temp file + rename), and an older single-entry ledger is
-migrated to double-entry on first load (the original is kept as a `.bak`).
+Checkpoint writes are atomic (temp file + rename); log writes are single
+appends. The oldest single-entry ledger format is migrated to double-entry, then
+to a log, on first load.
 
 ## Development
 
-`just dev` serves an **example book** (`dev/books.json`, built by `eg/seed.sh`
+`just dev` serves an **example book** (`dev/finfry.json`, built by `eg/seed.sh`
 on first run — three months of a typical household, budgets, recurring rules,
 a reconciled July statement) with the UI note picker on. `just seed` rebuilds
 it from scratch. Your real books are never touched: put them in a directory of

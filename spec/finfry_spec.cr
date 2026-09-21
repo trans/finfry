@@ -201,12 +201,14 @@ describe Finfry::Store do
       store.changeset("rent", "t1") { store.record("2026-06-01", "rent", expense("Expenses:Housing", 120000)) }
       store.changeset("food", "t2") { store.record("2026-06-02", "food", expense("Expenses:Food", 500)) }
 
-      store.reverse(1, "t3", "2026-06-17").not_nil!.reverses.should eq(1)
+      # #1 is the starter-chart commit; the log numbers every commit.
+      rent = store.changesets.first.id
+      store.reverse(rent, "t3", "2026-06-17").not_nil!.reverses.should eq(rent)
       store.transactions.size.should eq(3)                       # original kept + reversal added
       store.balances("Expenses:Housing").values.sum.should eq(0) # netted out
       store.balances("Expenses:Food").values.sum.should eq(500)  # untouched
-      store.reversed?(1).should be_true
-      expect_raises(Finfry::Error, /already reversed/) { store.reverse(1, "t4", "2026-06-17") }
+      store.reversed?(rent).should be_true
+      expect_raises(Finfry::Error, /already reversed/) { store.reverse(rent, "t4", "2026-06-17") }
     end
   end
 
@@ -284,7 +286,8 @@ describe Finfry::Store do
 
     begin
       store = Finfry::Store.new(path)
-      File.exists?("#{path}.bak").should be_true # original preserved
+      File.exists?("#{path}.pre-log").should be_true # original preserved
+      File.exists?(Finfry::Store.log_path(path)).should be_true
       store.db.next_id.should eq(3)
 
       balances = store.balances
@@ -295,8 +298,7 @@ describe Finfry::Store do
 
       store.transactions.all?(&.balanced?).should be_true
     ensure
-      File.delete(path) if File.exists?(path)
-      File.delete("#{path}.bak") if File.exists?("#{path}.bak")
+      [path, "#{path}.pre-log", Finfry::Store.log_path(path)].each { |f| File.delete(f) if File.exists?(f) }
     end
   end
 end
@@ -844,7 +846,7 @@ def with_store(&)
   begin
     yield Finfry::Store.new(path)
   ensure
-    File.delete(path) if File.exists?(path)
+    [path, Finfry::Store.log_path(path), "#{path}.pre-log"].each { |f| File.delete(f) if File.exists?(f) }
   end
 end
 
@@ -974,7 +976,7 @@ describe Finfry::Web do
       status, headers, body = web_request(web, "GET", "/register", headers: HTTP::Headers{"Cookie" => "finfry_flash=#{value}"})
       status.should eq(200)
       body.should contain("Recorded #1")
-      body.should contain(%(name="expect" value="1")) # the note offers Undo for this change
+      body.should contain(%(name="expect" value="#{store.changesets.last.id}")) # the note offers Undo for this change
       headers["Set-Cookie"].should contain("expires=")
     end
   end
@@ -1052,13 +1054,15 @@ describe Finfry::Web do
     with_store do |store|
       web = Finfry::Web.new(store)
       web_request(web, "POST", "/record", "amount=5&to=Expenses:Food&from=Assets:Checking")
+      mine = store.changesets.last.id
       # something else lands in between (say, from the CLI)
       store.changeset("meanwhile", "2026-06-05 10:00") { store.record("2026-06-05", "meanwhile", expense("Expenses:Food", 100)) }
-      _, headers, _ = web_request(web, "POST", "/undo", "expect=1", HTTP::Headers{"Referer" => "/record"})
+      theirs = store.changesets.last.id
+      _, headers, _ = web_request(web, "POST", "/undo", "expect=#{mine}", HTTP::Headers{"Referer" => "/record"})
       URI.decode_www_form(headers["Set-Cookie"]).should contain("error:")
       store.transactions.size.should eq(2) # nothing undone
 
-      _, headers, _ = web_request(web, "POST", "/undo", "expect=2")
+      _, headers, _ = web_request(web, "POST", "/undo", "expect=#{theirs}")
       store.transactions.size.should eq(1)                                  # the latest, as expected, popped
       URI.decode_www_form(headers["Set-Cookie"]).should contain("notice::") # and the "Undid" note offers no Undo of its own
     end

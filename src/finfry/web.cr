@@ -34,6 +34,7 @@ module Finfry
     # appends to (see `web/dev.js`); nil serves no dev tooling at all.
     def initialize(@store : Store, @host : String = DEFAULT_HOST, @port : Int32 = DEFAULT_PORT, @dev_notes : String? = nil)
       # Commands run non-interactively; their output is captured per request.
+      @store.origin = "web"
       @app = App.new(@store, out: STDERR, interactive: false)
     end
 
@@ -200,7 +201,7 @@ module Finfry
     end
 
     private def page_history(c : Ctx) : Nil
-      c.html render(c, "History", "history", HistoryPage.new(@app.history, @store.db.redo_snapshot.nil?).to_s)
+      c.html render(c, "History", "history", HistoryPage.new(@app.history, !@store.redo_available?).to_s)
     end
 
     private def page_record(c : Ctx) : Nil
@@ -234,6 +235,7 @@ module Finfry
       return c.finish(true, "That book isn't in the list — open it once from the command line first.", "/") unless entry
       return c.finish(true, "#{Books.display(entry.path)} is missing on disk.", "/") unless entry.exists?
       @store = Store.new(entry.path)
+      @store.origin = "web"
       @app = App.new(@store, out: STDERR, interactive: false)
       Books.touch(entry.path)
       c.finish(false, "Opened #{Books.display(entry.path)}.", "/")
@@ -272,7 +274,7 @@ module Finfry
     # meanwhile (from the CLI, say) can never be undone by mistake.
     private def post_undo(c : Ctx) : Nil
       if expect = c["expect"]?.presence
-        latest = @store.changesets.last?.try(&.id)
+        latest = @store.changesets.reject(&.reverted).last?.try(&.id) # what undo would pop
         unless latest.to_s == expect
           return c.finish(true, "Something else was recorded since — undo it from History instead.", c.referer)
         end

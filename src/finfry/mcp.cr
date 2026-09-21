@@ -18,6 +18,7 @@ module Finfry
       # Commands run non-interactively; their output is captured per call and
       # returned in the tool result. Base output goes to STDERR so it can never
       # corrupt the JSON-RPC stream on @output.
+      store.origin = "mcp"
       @app = App.new(store, out: STDERR, interactive: false)
     end
 

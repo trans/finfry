@@ -1,6 +1,7 @@
 # The log is the book — a log-first store for finfry
 
-*Design draft, 2026-09-21. Not yet built.*
+*Design 2026-09-21; built the same day (finfry `Store` on the `keep` shard).
+Status notes at the end.*
 
 ## The idea in one paragraph
 
@@ -196,3 +197,27 @@ migration's test.
    commits with their actions.
 5. Then the stage, then import — both now land on a store that records
    who did what and why, which is what the AI-first principle needed.
+
+## Status (2026-09-21)
+
+Built as designed, with these deviations found in the doing:
+
+- **The starter chart is the first commit** of a new book (`declare` × N,
+  kind bookkeeping) rather than an implicit seed in `Database.new`, so a fold
+  from nothing reproduces it. A brand-new book still writes nothing to disk
+  until its first change.
+- **Change numbers have gaps.** `history` shows ledger commits by their log
+  sequence, so bookkeeping commits in between leave holes (#1 is always the
+  starter chart). `history --all` shows everything. Accepted rather than
+  maintaining a second numbering.
+- **Migration doesn't replay declarations per changeset** — an account
+  declared then removed would come back. The `migrated` commit declares the
+  chart exactly as it stands.
+- **A `changeset` takes a `kind`**, so multi-action bookkeeping (`accounts
+  add A B`, a due catch-up) is one commit rather than one per action.
+- **Reverting a commit still advances id counters** in the fold, so ids
+  (transactions, rules, due entries) are never reused after an undo.
+- Verified: the whole prior spec suite passes unchanged in intent (four
+  specs updated for commit numbering / the `.pre-log` name); CLI output is
+  byte-identical to the previous release except history numbers; the fold
+  of the migrated real books reproduces every field of the old file.

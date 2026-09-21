@@ -180,6 +180,14 @@ module Finfry
     property added_transaction_ids : Array(Int32) = [] of Int32
     property budget_changes : Array(BudgetChange) = [] of BudgetChange
     property declared_accounts : Array(String) = [] of String
+    # Views over the log (not persisted): undone by a revert mark; the commit
+    # kind (ledger / bookkeeping / mark); who made it.
+    @[JSON::Field(ignore: true)]
+    property reverted : Bool = false
+    @[JSON::Field(ignore: true)]
+    property kind : String = "ledger"
+    @[JSON::Field(ignore: true)]
+    property origin : String = ""
 
     def initialize(@id, @at, @summary)
     end
@@ -324,10 +332,10 @@ module Finfry
     # mutation invalidates it.
     property redo_snapshot : RedoSnapshot? = nil
 
-    # Brand-new ledger only — seeds the starter chart. from_json does not call
-    # this, so deserialized ledgers keep whatever chart they had (or none).
+    # Empty. A brand-new book gets its starter chart (`DEFAULT_CHART`) as the
+    # log's first commit — see `Store` — so replaying the log from nothing
+    # rebuilds exactly the same chart.
     def initialize
-      @accounts = DEFAULT_CHART.dup
     end
   end
 end

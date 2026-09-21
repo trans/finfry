@@ -389,9 +389,9 @@ module Finfry
         .map { |(account, limit)| BudgetRow.new(account, @store.spent(account, month), limit) }
     end
 
-    # Newest first.
-    def history(limit : Int32? = nil) : Array(HistoryRow)
-      sets = @store.changesets.reverse
+    # Newest first. `all` includes bookkeeping commits and undo marks.
+    def history(limit : Int32? = nil, all : Bool = false) : Array(HistoryRow)
+      sets = @store.changesets(all).reverse
       sets = sets.first(limit) if limit
       sets.map { |cs| HistoryRow.new(cs, !cs.reversal? && @store.reversed?(cs.id)) }
     end

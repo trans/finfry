@@ -13,6 +13,8 @@ crystal: '>= 1.20.2'
 license: MIT
 
 dependencies:
+  keep:
+    path: /home/trans/my/com/tabcomputing/keep
   jargon:
     github: trans/jargon
     version: ~> 0.20

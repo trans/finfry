@@ -23,15 +23,15 @@ test:
 serve: build
     ./bin/finfry serve --open
 
-# Serve the example book (dev/books.json) with the UI note picker (✎ / Alt+N)
+# Serve the example book (dev/finfry.json) with the UI note picker (✎ / Alt+N)
 # writing to dev/ui-notes.md. Seeds the book first if it doesn't exist.
 dev: build
-    @test -f dev/books.json || eg/seed.sh dev/books.json ./bin/finfry
-    FINFRY_DATA=dev/books.json ./bin/finfry serve --open --dev
+    @test -f dev/finfry.json || eg/seed.sh dev/finfry.json ./bin/finfry
+    FINFRY_DATA=dev/finfry.json ./bin/finfry serve --open --dev
 
 # Rebuild the example book from scratch.
 seed: build
-    eg/seed.sh dev/books.json ./bin/finfry
+    eg/seed.sh dev/finfry.json ./bin/finfry
 
 # Format sources.
 format:

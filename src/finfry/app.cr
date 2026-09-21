@@ -293,6 +293,7 @@ module Finfry
         description: Show the change history
         properties:
           limit: {type: integer, short: n, description: "Show only the most recent N"}
+          all: {type: boolean, short: a, description: "Every commit in the log, bookkeeping and undo marks included"}
         YAML
 
       cli.subcommand "init", yaml: <<-YAML
@@ -302,6 +303,7 @@ module Finfry
         properties:
           path: {type: string, description: "Directory for the book (defaults to the current directory)"}
           "no-mcp": {type: boolean, description: "Skip writing a .mcp.json for AI/harness access"}
+          example: {type: boolean, description: "Mark it an example book (made-up data), so the UI says so"}
         YAML
 
       cli.subcommand "path", yaml: <<-YAML
@@ -1019,7 +1021,9 @@ module Finfry
       book = File.expand_path(File.join(target, Store::BOOK_FILE))
       raise Error.new("already a finfry book: #{book}") if File.exists?(book)
 
-      Store.new(book).save
+      store = Store.new(book)
+      store.mark_example if r["example"]?.try(&.as_bool)
+      store.touch
       puts "Initialized finfry book at #{book}"
 
       write_mcp_config(File.dirname(book), book) unless r["no-mcp"]?.try(&.as_bool)
@@ -1118,7 +1122,8 @@ module Finfry
     end
 
     private def cmd_history(r : Jargon::Result) : Nil
-      rows = history(r["limit"]?.try(&.as_i))
+      all = r["all"]?.try(&.as_bool) || false
+      rows = history(r["limit"]?.try(&.as_i), all)
       if rows.empty?
         puts "No history yet."
         return
@@ -1126,7 +1131,9 @@ module Finfry
       rows.each do |row|
         cs = row.changeset
         flag = row.reversed? ? "  (reversed)" : ""
-        puts "##{cs.id}  #{cs.at}  #{cs.summary}#{flag}"
+        flag += "  (undone)" if cs.reverted
+        tag = all ? "  %-11s %-4s" % {cs.kind, cs.origin} : ""
+        puts "##{cs.id}  #{cs.at}#{tag}  #{cs.summary}#{flag}"
       end
     end
 
@@ -1177,8 +1184,9 @@ module Finfry
     end
 
     private def cmd_accounts_add(r : Jargon::Result) : Nil
-      r["names"].as_a.map(&.as_s).each do |name|
-        puts(@store.declare_account(name) ? "Added #{name}" : "#{name} already declared")
+      names = r["names"].as_a.map(&.as_s)
+      @store.changeset("declare #{names.join(", ")}", now, Store::KIND_BOOKKEEPING) do
+        names.each { |name| puts(@store.declare_account(name) ? "Added #{name}" : "#{name} already declared") }
       end
     end
 
@@ -1307,8 +1315,7 @@ module Finfry
         puts "No matching due entries."
         return
       end
-      targets.each { |e| e.status = status }
-      @store.save
+      @store.set_due_status(targets.map(&.id), status)
       verb = status == "pending" ? "reset" : status
       puts "#{verb}: #{targets.map(&.id).sort.join(", ")}"
     end
@@ -1326,19 +1333,19 @@ module Finfry
       entry = @store.due_entries.find { |e| e.id == id }
       raise Error.new("no due entry ##{id}") unless entry
 
+      postings = entry.postings
       if a = r["amount"]?.try(&.as_s)
         amount = Money.parse(a)
-        entry.postings = entry.postings.map { |p| Posting.new(p.account, p.amount < 0 ? -amount : amount) }
+        postings = postings.map { |p| Posting.new(p.account, p.amount < 0 ? -amount : amount) }
       end
+      date = entry.date
       if d = r["date"]?.try(&.as_s)
         validate_date!(d)
-        entry.date = d
+        date = d
       end
-      if m = r["memo"]?.try(&.as_s)
-        entry.description = m
-      end
-      entry.status = "ok"
-      @store.save
+      description = r["memo"]?.try(&.as_s) || entry.description
+      @store.edit_due(id, date, description, postings)
+      entry = @store.due_entries.find { |e| e.id == id }.not_nil!
       puts "##{entry.id}  #{entry.date}  #{label(entry)}  ✓ ok"
     end
 
