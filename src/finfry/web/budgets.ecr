@@ -6,7 +6,7 @@
 <div class="filters-row">
   <form class="filters month-form" method="get" action="/budgets">
     <a class="button quiet" href="<%= url "/budgets", month: prev_month(@month) %>" aria-label="Previous month">‹</a>
-    <label>Month <input type="month" name="month" value="<%= @month %>"></label>
+    <label>Month <input type="month" name="month" placeholder="YYYY-MM" pattern="[0-9]{4}-[0-9]{2}" title="Month as YYYY-MM" value="<%= @month %>"></label>
     <a class="button quiet" href="<%= url "/budgets", month: next_month(@month) %>" aria-label="Next month">›</a>
     <button type="submit">Show</button>
   </form>
