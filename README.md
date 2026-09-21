@@ -88,7 +88,7 @@ you review and approve — nothing posts automatically.
 
 ```sh
 finfry recurring add 15.49 Expenses:Subscriptions:Netflix -m Netflix -e monthly
-finfry recurring add 1200 Expenses:Housing -m Rent -e monthly --from Assets:Savings
+finfry recurring add 1200 Expenses:Housing -m Rent -e monthly -c Assets:Savings   # -c/--counter: the other account
 finfry recurring list
 finfry recurring off 2          # stop generating new occurrences
 ```
@@ -433,6 +433,12 @@ Writes are atomic (temp file + rename), and an older single-entry ledger is
 migrated to double-entry on first load (the original is kept as a `.bak`).
 
 ## Development
+
+`just dev` serves an **example book** (`dev/books.json`, built by `eg/seed.sh`
+on first run — three months of a typical household, budgets, recurring rules,
+a reconciled July statement) with the UI note picker on. `just seed` rebuilds
+it from scratch. Your real books are never touched: put them in a directory of
+their own with `finfry init` and run `finfry serve` there.
 
 ```sh
 crystal spec          # run the test suite
