@@ -25,10 +25,13 @@ module Finfry
         path == Store.global_path
       end
 
-      # Peek at the file for the example flag without loading it as a Store.
+      # Peek at the file for the example flag without loading it as a Store
+      # (a checkpoint keeps it under `state`; a pre-log file at the top).
       def example? : Bool
         return false unless exists?
-        JSON.parse(File.read(path))["example"]?.try(&.as_bool?) || false
+        doc = JSON.parse(File.read(path))
+        flag = doc["state"]?.try(&.["example"]?) || doc["example"]?
+        flag.try(&.as_bool?) || false
       rescue JSON::ParseException | IO::Error
         false
       end
