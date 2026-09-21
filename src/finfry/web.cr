@@ -22,10 +22,16 @@ module Finfry
     # Assets are baked into the binary so `finfry serve` stays self-contained.
     STYLE  = {{ read_file("#{__DIR__}/web/style.css") }}
     SCRIPT = {{ read_file("#{__DIR__}/web/app.js") }}
+    DEV_JS = {{ read_file("#{__DIR__}/web/dev.js") }}
+
+    # Where `serve --dev` appends UI notes picked in the browser.
+    DEV_NOTES = "dev/ui-notes.md"
 
     FLASH_COOKIE = "finfry_flash"
 
-    def initialize(@store : Store, @host : String = DEFAULT_HOST, @port : Int32 = DEFAULT_PORT)
+    # `dev_notes` enables the in-page note picker and names the file it
+    # appends to (see `web/dev.js`); nil serves no dev tooling at all.
+    def initialize(@store : Store, @host : String = DEFAULT_HOST, @port : Int32 = DEFAULT_PORT, @dev_notes : String? = nil)
       # Commands run non-interactively; their output is captured per request.
       @app = App.new(@store, out: STDERR, interactive: false)
     end
@@ -71,6 +77,8 @@ module Finfry
       when {"GET", "/api/recall"}        then api_recall(c)
       when {"GET", "/static/style.css"}  then c.asset("text/css", STYLE)
       when {"GET", "/static/app.js"}     then c.asset("text/javascript", SCRIPT)
+      when {"GET", "/static/dev.js"}     then @dev_notes ? c.asset("text/javascript", DEV_JS) : c.not_found
+      when {"POST", "/dev/note"}         then post_dev_note(c)
       when {"POST", "/record"}           then post_record(c)
       when {"POST", "/accounts/add"}     then perform(c, "accounts add", {"names" => list(c["names"].split)}, "/accounts")
       when {"POST", "/budgets/set"}      then perform(c, "budget set", args(c, "account", "amount"), "/budgets")
@@ -160,7 +168,9 @@ module Finfry
         return c.html render(c, "Reconcile", "reconcile", ReconcileIndexPage.new(@app.reconcilable_accounts).to_s)
       end
       statement = c["statement"]?.presence.try { |s| Money.parse(s) }
-      as_of = c["as_of"]?.presence
+      # The strip shows a suggested statement date; what's shown is what's
+      # used, so a balance given without a date takes the suggestion.
+      as_of = c["as_of"]?.presence || (statement ? @app.next_statement_date(account) : nil)
       view = @app.reconciliation(account, statement, as_of)
       c.html render(c, "Reconcile", "reconcile", ReconcilePage.new(
         view, @store.reconciliations(account), c["statement"]?.presence, as_of || @app.next_statement_date(account)
@@ -324,6 +334,33 @@ module Finfry
       c.finish(error, output, back, undo: undo)
     end
 
+    # Append a note picked in the browser to the notes file, as markdown a
+    # reader can act on: the page, the view (→ its template), the element's
+    # path and context, then the note itself.
+    private def post_dev_note(c : Ctx) : Nil
+      return c.not_found unless file = @dev_notes
+      info = JSON.parse(c.raw_body)
+      note = info["note"]?.try(&.as_s).to_s.strip
+      return c.finish(true, "empty note", "/") if note.empty?
+      view = info["view"]?.try(&.as_s).to_s
+      Dir.mkdir_p(File.dirname(file))
+      File.open(file, "a") do |f|
+        f.puts "## #{Time.local.to_s("%Y-%m-%d %H:%M")}  #{info["page"]?.try(&.as_s)}"
+        f.puts "- view: `#{view}` → `src/finfry/web/#{view}.ecr`" unless view.empty?
+        f.puts "- element: `#{info["path"]?.try(&.as_s)}`"
+        {"section", "label", "column", "row", "text"}.each do |k|
+          if v = info[k]?.try(&.as_s).presence
+            f.puts "- #{k}: #{v}"
+          end
+        end
+        f.puts "- html: `#{info["html"]?.try(&.as_s)}`"
+        f.puts
+        f.puts note
+        f.puts
+      end
+      c.json({"ok" => true, "file" => file})
+    end
+
     # --- helpers --------------------------------------------------------
 
     # The named form fields that were filled in, as command arguments.
@@ -346,7 +383,7 @@ module Finfry
     end
 
     private def render(c : Ctx, title : String, active : String, body : String) : String
-      Layout.new(title, active, body, @store.path, @store.due_entries.size, c.flash).to_s
+      Layout.new(title, active, body, @store.path, @store.due_entries.size, c.flash, !@dev_notes.nil?).to_s
     end
 
     private def today : String
@@ -368,11 +405,15 @@ module Finfry
       # change can be popped — which changeset the Undo button should expect.
       record Flash, kind : String, text : String, undo : Int32? = nil
 
+      getter raw_body : String = ""
+
       def initialize(@ctx : HTTP::Server::Context)
         @params = @ctx.request.query_params.dup
         if @ctx.request.method == "POST"
-          body = @ctx.request.body.try(&.gets_to_end) || ""
-          HTTP::Params.parse(body).each { |k, v| @params.add(k, v) }
+          @raw_body = @ctx.request.body.try(&.gets_to_end) || ""
+          unless @ctx.request.headers["Content-Type"]?.try(&.starts_with?("application/json"))
+            HTTP::Params.parse(@raw_body).each { |k, v| @params.add(k, v) }
+          end
         end
         @flash = read_flash
       end
@@ -539,7 +580,7 @@ module Finfry
       include Helpers
 
       def initialize(@title : String, @active : String, @body : String, @book : String,
-                     @due_count : Int32, @flash : Ctx::Flash?)
+                     @due_count : Int32, @flash : Ctx::Flash?, @dev : Bool = false)
       end
 
       def nav(name : String) : String

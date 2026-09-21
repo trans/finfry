@@ -23,6 +23,10 @@ test:
 serve: build
     ./bin/finfry serve --open
 
+# Same, with the UI note picker (✎ / Alt+N) writing to dev/ui-notes.md.
+dev: build
+    ./bin/finfry serve --open --dev
+
 # Format sources.
 format:
     crystal tool format src/ spec/

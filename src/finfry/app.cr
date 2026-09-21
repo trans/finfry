@@ -314,6 +314,7 @@ module Finfry
           port: {type: integer, short: p, description: "Port to listen on", default: #{Web::DEFAULT_PORT}}
           host: {type: string, description: "Address to bind", default: #{Web::DEFAULT_HOST}}
           open: {type: boolean, short: o, description: "Open it in your browser"}
+          dev: {type: boolean, description: "Dev tooling: a ✎ button (Alt+N) to pick any element and note a UI issue into #{Web::DEV_NOTES}"}
         YAML
 
       cli.subcommand "delete", yaml: <<-YAML
@@ -1020,9 +1021,11 @@ module Finfry
     private def cmd_serve(r : Jargon::Result) : Nil
       host = r["host"]?.try(&.as_s) || Web::DEFAULT_HOST
       port = r["port"]?.try(&.as_i) || Web::DEFAULT_PORT
-      Web.new(@store, host, port).run do |url|
+      dev = r["dev"]?.try(&.as_bool) ? Web::DEV_NOTES : nil
+      Web.new(@store, host, port, dev).run do |url|
         puts "finfry serving #{@store.path}"
         puts "  #{url}  (Ctrl-C to stop)"
+        puts "  dev notes → #{dev}  (✎ button or Alt+N in the page)" if dev
         open_in_browser(url) if r["open"]?.try(&.as_bool)
       end
     end

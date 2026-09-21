@@ -31,7 +31,7 @@
     </ul>
     <a class="button primary record-link" href="/record">Record an entry</a>
   </nav>
-  <main id="main">
+  <main id="main" data-view="<%= h @active %>">
     <% if f = @flash %>
     <div class="flash <%= f.kind %>" role="status">
       <pre><%= h f.text %></pre>
@@ -44,5 +44,6 @@
   </main>
 </div>
 <script src="/static/app.js" defer></script>
+<% if @dev %><script src="/static/dev.js" defer></script><% end %>
 </body>
 </html>

@@ -296,6 +296,12 @@ command's own output shows as a note on the next page. Unknown accounts under
 `guard` are rejected (there's no prompt to answer); declare them first on the
 Accounts page.
 
+`finfry serve --dev` (or `just dev`) adds a ✎ button (and `Alt+N`): click it,
+then click any element on the page — a button or input is picked, not
+triggered — and describe what's wrong. The note lands in `dev/ui-notes.md`
+with the page, the view's template file, a path to the element and its table
+context, so whoever fixes it can go straight to the spot.
+
 The server re-reads the book whenever another process writes it, so you can
 keep using the CLI or an MCP session alongside it. It binds `127.0.0.1` only and
 has no authentication — it's for you, on your machine. Splits (`add`), account

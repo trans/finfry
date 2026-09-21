@@ -1172,3 +1172,42 @@ describe "reconciliation statement date" do
     end
   end
 end
+
+describe "Finfry::Web dev notes" do
+  it "serves the picker and appends notes only under --dev" do
+    with_store do |store|
+      path = File.tempname("finfry_notes", ".md")
+      begin
+        plain = Finfry::Web.new(store)
+        web_request(plain, "GET", "/static/dev.js")[0].should eq(404)
+        web_request(plain, "GET", "/")[2].should_not contain("dev.js")
+
+        dev = Finfry::Web.new(store, dev_notes: path)
+        web_request(dev, "GET", "/static/dev.js")[0].should eq(200)
+        web_request(dev, "GET", "/")[2].should contain("dev.js")
+        status, _, body = web_request(dev, "POST", "/dev/note",
+          %({"page":"/register","view":"register","path":"main > table.ledger","text":"Coffee","html":"<td>Coffee</td>","column":"Memo","note":"too small"}),
+          HTTP::Headers{"Content-Type" => "application/json"})
+        status.should eq(200)
+        JSON.parse(body)["ok"].as_bool.should be_true
+        notes = File.read(path)
+        notes.should contain("src/finfry/web/register.ecr")
+        notes.should contain("main > table.ledger")
+        notes.should contain("column: Memo")
+        notes.should contain("too small")
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
+  end
+
+  it "a statement balance without a date takes the suggested statement date" do
+    with_store do |store|
+      store.record("2026-08-15", "salary",
+        [Finfry::Posting.new("Assets:Checking", 100000_i64), Finfry::Posting.new("Income:Salary", -100000_i64)])
+      _, _, body = web_request(Finfry::Web.new(store), "GET", "/reconcile?account=Assets:Checking&statement=1000")
+      body.should contain("Commit reconciliation")
+      body.should_not contain("Enter the statement date")
+    end
+  end
+end
