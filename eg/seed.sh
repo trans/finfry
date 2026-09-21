@@ -77,4 +77,11 @@ f reconcile Assets:Checking commit "$bal" --as-of 2026-07-31
 aug_ids=$("$finfry" register -a Assets:Checking -m 2026-08 | awk '{print substr($1,2)}' | head -6 | tr '\n' ' ')
 f reconcile Assets:Checking clear $aug_ids
 
+# Mark it as an example book, so the UI says so.
+python3 - "$book" <<'PY'
+import json, sys
+p = sys.argv[1]; d = json.load(open(p)); d["example"] = True
+json.dump(d, open(p, "w"), indent=2)
+PY
+
 echo "seeded $book"

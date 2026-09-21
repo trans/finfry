@@ -1300,3 +1300,22 @@ describe Finfry::Books do
     end
   end
 end
+
+describe "Finfry::Web reads never write" do
+  it "a page view doesn't materialize due occurrences; the catch-up is a POST" do
+    with_store do |store|
+      store.add_recurring_rule("Prime", "yearly", "2025-01-01", expense("Expenses:Food", 11988))
+      before = File.read(store.path)
+      web = Finfry::Web.new(store)
+      _, _, body = web_request(web, "GET", "/")
+      _, _, due = web_request(web, "GET", "/due")
+      File.read(store.path).should eq(before) # untouched by GETs
+      store.due_entries.should be_empty
+      body.should contain("occurrences awaiting review") # but the count includes what's come due
+      due.should contain("come due")
+
+      web_request(web, "POST", "/due/generate", "")
+      store.due_entries.size.should eq(2)
+    end
+  end
+end

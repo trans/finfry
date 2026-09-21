@@ -396,10 +396,21 @@ module Finfry
       sets.map { |cs| HistoryRow.new(cs, !cs.reversal? && @store.reversed?(cs.id)) }
     end
 
-    # The due queue, materializing anything newly due first. Oldest first.
+    # The due queue, materializing anything newly due first (the CLI's
+    # semantics). Oldest first.
     def due_queue : Array(DueEntry)
       @store.generate_due(today)
       @store.due_entries.sort_by { |e| {e.date, e.id} }
+    end
+
+    # The queue as it stands, without catching up — for pages, which must not
+    # write on a GET. Pair with `newly_due` to offer the catch-up.
+    def due_entries : Array(DueEntry)
+      @store.due_entries.sort_by { |e| {e.date, e.id} }
+    end
+
+    def newly_due : Int32
+      @store.occurrences_due(today)
     end
 
     # Reconciliation status: the working list (every not-yet-reconciled

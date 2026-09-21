@@ -167,6 +167,10 @@ module Finfry
 
     # --- chart of accounts ----------------------------------------------
 
+    def example? : Bool
+      @db.example
+    end
+
     def account_policy : String
       @db.account_policy
     end
@@ -210,6 +214,15 @@ module Finfry
     # Materialize every occurrence due up to `today` into the queue, advancing
     # each rule's cursor so nothing is generated twice. Returns how many were
     # added.
+    # How many occurrences `generate_due` would materialize as of `today`,
+    # without touching anything — so a read-only view can say "N new have
+    # come due" and offer the catch-up as a deliberate step.
+    def occurrences_due(today : String) : Int32
+      @db.recurring.sum(0) do |rule|
+        rule.active ? Recurrence.occurrences(rule.next_date, rule.cadence, today).size : 0
+      end
+    end
+
     def generate_due(today : String) : Int32
       count = 0
       @db.recurring.each do |rule|

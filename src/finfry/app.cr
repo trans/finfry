@@ -1058,6 +1058,7 @@ module Finfry
         notes = [] of String
         notes << "active" if e.path == active
         notes << "global" if e.global?
+        notes << "example" if e.example?
         notes << "missing" unless e.exists?
         opened = e.opened_at.empty? ? "never opened" : "last opened #{e.opened_at}"
         puts "#{mark} %-#{width}s  %s#{notes.empty? ? "" : "  (#{notes.join(", ")})"}" % {Books.display(e.path), opened}

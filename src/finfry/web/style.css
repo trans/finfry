@@ -93,6 +93,9 @@ code { font-family: var(--mono); font-size: .9em; background: var(--paper-2); pa
   overflow: hidden; text-overflow: ellipsis;
 }
 .book-switch select:hover, .book-switch select:focus { border-color: var(--rule); background: var(--surface); }
+.book-kind { display: inline-block; margin: 4px 0 0 4px; font-size: .66rem; text-transform: uppercase; letter-spacing: .1em;
+  padding: 1px 6px; border-radius: 3px; border: 1px solid var(--rule-strong); color: var(--ink-2); }
+.book-kind.real { border-color: var(--red); color: var(--red); }
 .side ul { list-style: none; margin: 0; padding: 0; flex: 1; }
 .side li.head {
   font-size: .68rem; text-transform: uppercase; letter-spacing: .12em;
@@ -322,6 +325,7 @@ html.js .nojs-only { display: none; }
 .card-sub { margin: -6px 0 10px; font-size: .85rem; color: var(--ink-2); }
 select[name="account"] { max-width: 260px; }
 
+.bar.catch-up { padding: 12px 16px; background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 6px; justify-content: space-between; }
 .ledger-page { margin-bottom: 28px; }
 .ledger-page h2 { margin-bottom: 4px; }
 .ledger tr.carried td { color: var(--ink-2); font-style: italic; }

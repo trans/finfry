@@ -89,6 +89,7 @@ module Finfry
       when {"POST", "/due/stage"}        then post_due_stage(c)
       when {"POST", "/due/edit"}         then post_due_edit(c)
       when {"POST", "/due/post"}         then perform(c, "due post", {} of String => JSON::Any, "/due")
+      when {"POST", "/due/generate"}     then post_due_generate(c)
       when {"POST", "/reconcile/mark"}   then post_reconcile_mark(c)
       when {"POST", "/reconcile/commit"} then post_reconcile_commit(c)
       when {"POST", "/undo"}             then post_undo(c)
@@ -104,7 +105,7 @@ module Finfry
     private def page_overview(c : Ctx) : Nil
       month = current_month
       c.html render(c, "Overview", "overview", OverviewPage.new(
-        @app.balance_sheet, @app.income_statement(month), @app.due_queue.size,
+        @app.balance_sheet, @app.income_statement(month), @app.due_entries.size + @app.newly_due,
         @app.budgets(month), @app.register(limit: 8).rows.reverse, today
       ).to_s)
     end
@@ -176,8 +177,10 @@ module Finfry
       c.html render(c, "Recurring", "recurring", RecurringPage.new(@store.recurring_rules, @app).to_s)
     end
 
+    # Read-only: shows what's materialized and, if rules have occurrences
+    # that haven't been generated yet, offers the catch-up as a button.
     private def page_due(c : Ctx) : Nil
-      c.html render(c, "Due", "due", DuePage.new(@app.due_queue, @app).to_s)
+      c.html render(c, "Due", "due", DuePage.new(@app.due_entries, @app.newly_due, @app).to_s)
     end
 
     # No account: the overview of what needs reconciling. With one: the
@@ -298,6 +301,12 @@ module Finfry
       end
       staged = @store.due_entries.count { |e| e.status != "pending" }
       c.finish(false, messages.join("\n"), "/due", {"staged" => staged})
+    end
+
+    # The catch-up `finfry due` does implicitly, as an explicit step here.
+    private def post_due_generate(c : Ctx) : Nil
+      n = @store.generate_due(Time.local.to_s("%Y-%m-%d"))
+      c.finish(false, n > 0 ? "#{n} occurrence#{n == 1 ? "" : "s"} added to the queue." : "Nothing new has come due.", "/due")
     end
 
     private def post_due_edit(c : Ctx) : Nil
@@ -434,8 +443,8 @@ module Finfry
     end
 
     private def render(c : Ctx, title : String, active : String, body : String) : String
-      Layout.new(title, active, body, File.expand_path(@store.path), Books.list,
-        @store.due_entries.size, c.flash, !@dev_notes.nil?).to_s
+      Layout.new(title, active, body, File.expand_path(@store.path), Books.list, @store.example?,
+        @store.due_entries.size + @app.newly_due, c.flash, !@dev_notes.nil?).to_s
     end
 
     private def today : String
@@ -632,7 +641,8 @@ module Finfry
       include Helpers
 
       def initialize(@title : String, @active : String, @body : String, @book : String,
-                     @books : Array(Books::Entry), @due_count : Int32, @flash : Ctx::Flash?, @dev : Bool = false)
+                     @books : Array(Books::Entry), @example : Bool, @due_count : Int32,
+                     @flash : Ctx::Flash?, @dev : Bool = false)
       end
 
       # The recent books as options, the active one selected, missing ones
@@ -641,7 +651,8 @@ module Finfry
         @books.map do |e|
           attrs = e.path == @book ? " selected" : ""
           attrs += " disabled" if !e.exists?
-          %(<option value="#{h e.path}"#{attrs}>#{h Books.display(e.path)}#{e.global? ? " (global)" : ""}</option>)
+          note = e.example? ? " (example)" : e.global? ? " (global)" : ""
+          %(<option value="#{h e.path}"#{attrs}>#{h Books.display(e.path)}#{note}</option>)
         end.join
       end
 
@@ -758,7 +769,7 @@ module Finfry
     class DuePage
       include Helpers
 
-      def initialize(@entries : Array(DueEntry), @app : App)
+      def initialize(@entries : Array(DueEntry), @newly_due : Int32, @app : App)
       end
 
       def staged : Int32

@@ -24,6 +24,14 @@ module Finfry
       def global? : Bool
         path == Store.global_path
       end
+
+      # Peek at the file for the example flag without loading it as a Store.
+      def example? : Bool
+        return false unless exists?
+        JSON.parse(File.read(path))["example"]?.try(&.as_bool?) || false
+      rescue JSON::ParseException | IO::Error
+        false
+      end
     end
 
     def self.registry_path : String

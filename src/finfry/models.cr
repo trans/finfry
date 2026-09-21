@@ -303,6 +303,11 @@ module Finfry
     # "strict" | "guard" | "off"
     property account_policy : String = "strict"
 
+    # Marks a book of made-up data (the one `eg/seed.sh` builds), so the UI
+    # can say "example book" vs "real book" and nobody records rent into the
+    # wrong one.
+    property example : Bool = false
+
     # Recurring rules + their id counter.
     property recurring : Array(RecurringRule) = [] of RecurringRule
     property next_recurring_id : Int32 = 1

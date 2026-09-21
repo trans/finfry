@@ -15,6 +15,7 @@
     <form method="post" action="/book" class="book-switch" title="<%= h @book %>">
       <select name="path" aria-label="Book" onchange="this.form.submit()"><%= book_options %></select>
       <button type="submit" class="nojs-only small quiet">Open</button>
+      <span class="book-kind <%= @example ? "example" : "real" %>"><%= @example ? "example book" : "real book" %></span>
     </form>
     <ul>
       <li><a href="/"<%= nav "overview" %>>Overview</a></li>
