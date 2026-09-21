@@ -41,6 +41,22 @@ module Finfry
     end
   end
 
+  # One account's page of the general ledger for a period: the balance
+  # brought forward, its lines with a running balance, and the closing
+  # balance. Amounts are display-signed.
+  struct LedgerAccount
+    getter account : String
+    getter opening : Int64
+    getter rows : Array(RegisterRow)
+
+    def initialize(@account, @opening, @rows)
+    end
+
+    def closing : Int64
+      rows.last?.try(&.running) || opening
+    end
+  end
+
   # Income statement for one month: per-account lines (largest first) and totals.
   struct IncomeStatement
     getter month : String
@@ -256,6 +272,35 @@ module Finfry
         end
       end
       RegisterView.new(account, rows)
+    end
+
+    # The general ledger: every account with postings (exact, not subtree —
+    # each account is its own page), in name order, each with the balance
+    # brought forward into the period, its lines in the period, and the
+    # running balance. Accounts with nothing in the period and a zero
+    # balance are left out.
+    def general_ledger(prefix : String? = nil, since : String? = nil, until_date : String? = nil) : Array(LedgerAccount)
+      validate_date!(since) if since
+      validate_date!(until_date) if until_date
+      ordered = @store.transactions.sort_by { |t| {t.date, t.id} }
+      accounts = @store.used_accounts.select { |a| prefix.nil? || Finfry.in_subtree?(a, prefix) }
+      accounts.compact_map do |account|
+        bal = 0_i64
+        opening = 0_i64
+        rows = [] of RegisterRow
+        ordered.each do |t|
+          leg = t.postings.sum(0_i64) { |p| p.account == account ? p.amount : 0_i64 }
+          next if leg.zero?
+          bal += leg
+          if since && t.date < since
+            opening = bal
+          elsif until_date.nil? || t.date <= until_date
+            rows << RegisterRow.new(t, display_cents(account, leg), display_cents(account, bal))
+          end
+        end
+        next if rows.empty? && opening.zero?
+        LedgerAccount.new(account, display_cents(account, opening), rows)
+      end
     end
 
     # Display-signed balances, sorted by account name.

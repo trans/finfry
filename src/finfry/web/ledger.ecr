@@ -1,0 +1,43 @@
+<header class="page-head">
+  <h1>General ledger<% if p = @prefix %> <span class="muted"><%= h p %></span><% end %></h1>
+  <p class="sub">Every account's page: the balance brought forward, its lines for the period, and the running balance<% if @since || @until %> · <%= h(@since || "…") %> – <%= h(@until || "…") %> · <a href="<%= url "/ledger", prefix: @prefix, all: "1" %>">all time</a><% else %> · all time<% end %></p>
+</header>
+
+<form class="filters" method="get" action="/ledger">
+  <label>Accounts
+    <select name="prefix">
+      <option value="">All accounts</option>
+      <%= account_options @accounts, @prefix %>
+    </select>
+  </label>
+  <label>From <input type="date" name="since" value="<%= h(@since || "") %>"></label>
+  <label>To <input type="date" name="until" value="<%= h(@until || "") %>"></label>
+  <button type="submit">Show</button>
+  <a class="button quiet" href="/ledger">This month</a>
+</form>
+
+<% if @pages.empty? %>
+  <p class="empty">Nothing in the ledger for that account or period.</p>
+<% else %>
+  <% @pages.each do |page| %>
+  <section class="ledger-page">
+    <h2><a href="<%= url "/register", account: page.account, since: @since, until: @until, all: (@since || @until) ? nil : "1" %>"><%= h page.account %></a></h2>
+    <table class="ledger">
+      <thead><tr><th>#</th><th>Date</th><th>Memo</th><th class="num-col">Amount</th><th class="num-col running">Balance</th></tr></thead>
+      <tbody>
+        <tr class="carried"><td></td><td></td><td>Balance brought forward</td><td class="num-col"></td><td class="num-col running"><%= money page.opening %></td></tr>
+        <% page.rows.each do |row| t = row.txn %>
+        <tr>
+          <td class="id"><%= t.id %></td>
+          <td class="date"><%= t.date %></td>
+          <td><%= h t.description %><% if t.recurrence %> <span class="tag"><%= t.recurrence %></span><% end %></td>
+          <td class="num-col"><%= money row.leg.not_nil! %></td>
+          <td class="num-col running"><%= money row.running.not_nil! %></td>
+        </tr>
+        <% end %>
+        <tr class="total"><th></th><th></th><th>Closing balance</th><td class="num-col"></td><td class="num-col running"><%= money page.closing %></td></tr>
+      </tbody>
+    </table>
+  </section>
+  <% end %>
+<% end %>

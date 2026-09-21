@@ -169,6 +169,16 @@ module Finfry
           prefix: {type: string, description: "Limit to this account subtree"}
         YAML
 
+      cli.subcommand "ledger", yaml: <<-YAML
+        type: object
+        description: The general ledger — every account's page, with balance brought forward and running balance
+        positional: [prefix]
+        properties:
+          prefix: {type: string, description: "Limit to this account subtree"}
+          since: {type: string, short: s, description: "Period start (YYYY-MM-DD); earlier activity becomes the balance brought forward"}
+          until: {type: string, short: u, description: "Period end (YYYY-MM-DD)"}
+        YAML
+
       report = Jargon.new("report")
       report.subcommand "income", yaml: <<-YAML
         type: object
@@ -475,6 +485,7 @@ module Finfry
       when "add"                  then cmd_add(result)
       when "register"             then cmd_register(result)
       when "balance"              then cmd_balance(result)
+      when "ledger"               then cmd_ledger(result)
       when "report income"        then cmd_report(result)
       when "report balance-sheet" then cmd_balancesheet(result)
       when "report daily"         then cmd_daily(result)
@@ -876,6 +887,26 @@ module Finfry
       width = lines.max_of { |(account, _)| account.size }
       lines.each do |(account, cents)|
         puts "%-#{width}s  %14s" % {account, Money.format(cents)}
+      end
+    end
+
+    private def cmd_ledger(r : Jargon::Result) : Nil
+      pages = general_ledger(r["prefix"]?.try(&.as_s), r["since"]?.try(&.as_s), r["until"]?.try(&.as_s))
+      if pages.empty?
+        puts "Nothing in the ledger for that account or period."
+        return
+      end
+      pages.each_with_index do |page, i|
+        puts "" if i > 0
+        puts page.account
+        puts "  %-4s %-10s  %-28s %13s  %13s" % {"", "", "Balance brought forward", "", Money.format(page.opening)} if page.opening != 0 || r["since"]?
+        page.rows.each do |row|
+          t = row.txn
+          memo = t.description
+          memo = "#{memo[0, 27]}…" if memo.size > 28
+          puts "  #%-4d %s  %-28s %13s  %13s" % {t.id, t.date, memo, Money.format(row.leg.not_nil!), Money.format(row.running.not_nil!)}
+        end
+        puts "  %-4s %-10s  %-28s %13s  %13s" % {"", "", "Closing balance", "", Money.format(page.closing)}
       end
     end
 
@@ -1416,6 +1447,8 @@ module Finfry
           JSON.parse(%({"type":"object","properties":{"account":{"type":"string"},"month":{"type":"string"},"since":{"type":"string"},"until":{"type":"string"},"min":{"type":"string"},"max":{"type":"string"},"match":{"type":"string"},"limit":{"type":"integer"}}}))),
         AgentTool.new("balance", "balance", false, "Show account balances, optionally limited to an account subtree (prefix).",
           JSON.parse(%({"type":"object","properties":{"prefix":{"type":"string"}}}))),
+        AgentTool.new("general_ledger", "ledger", false, "The general ledger: each account's page with balance brought forward, lines and running balance. Filters: prefix (subtree), since/until (YYYY-MM-DD).",
+          JSON.parse(%({"type":"object","properties":{"prefix":{"type":"string"},"since":{"type":"string"},"until":{"type":"string"}}}))),
         AgentTool.new("income_statement", "report income", false, "Income statement for a month (YYYY-MM; default current).",
           JSON.parse(%({"type":"object","properties":{"month":{"type":"string"}}}))),
         AgentTool.new("balance_sheet", "report balance-sheet", false, "Balance sheet: Assets / Liabilities / Equity with subtotals and the accounting-equation integrity check.",

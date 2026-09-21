@@ -319,3 +319,7 @@ html.js .nojs-only { display: none; }
 
 .card-sub { margin: -6px 0 10px; font-size: .85rem; color: var(--ink-2); }
 select[name="account"] { max-width: 260px; }
+
+.ledger-page { margin-bottom: 28px; }
+.ledger-page h2 { margin-bottom: 4px; }
+.ledger tr.carried td { color: var(--ink-2); font-style: italic; }

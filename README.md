@@ -211,7 +211,7 @@ echo "netflix 15.49 monthly" | finfry ai --yes
 
 How it works:
 
-- **Read tools** (`register`, `balance`, `report`, `balance-sheet`, `daily`,
+- **Read tools** (`register`, `general_ledger`, `balance`, `report`, `balance-sheet`, `daily`,
   `accounts`, `history`, `recurring`, `due`, `reconcile`) run immediately so the
   AI can answer and gather context.
 - **Write tools** (`spend`, `earn`, `transfer`, `budget`, `accounts add/rename`,
@@ -339,6 +339,7 @@ finfry register -a Assets:Checking                     # account view: compact, 
 finfry register -s 2026-06-01 -u 2026-06-30 --min 100  # filter by date range / amount...
 finfry register -q rent                                # ...or memo text (--match)
 finfry balance [Assets]                                # account balances (quick lookup)
+finfry ledger [Assets] [-s 2026-09-01] [-u 2026-09-30] # general ledger: each account's page, balance brought forward, running balance
 finfry report                                          # income statement (default)
 finfry report income [-m 2026-06]                      # income statement
 finfry report balance-sheet [-d 2026-06-30]            # balance sheet + integrity check
@@ -461,6 +462,14 @@ Layout:
 
 ## Roadmap
 
+- **Standard accounting names.** The views don't yet use the textbook words
+  consistently. In bookkeeping terms: the unfiltered `register` is the
+  **journal** (every transaction with its debits and credits); `register -a
+  <account>` is a **ledger account** page — and "register" is the right
+  end-user word for *that* one (a checkbook register is exactly one account
+  with a running balance); `ledger` is the **general ledger**; `balance` is
+  roughly the **trial balance**. Decide the vocabulary once and rename across
+  the CLI, the AI/MCP tool names, and the web nav together — not piecemeal.
 - A lightweight built-in chat fallback (a thin REPL over `finfry ai`) for when no
   external harness is available
 - AI support for split transactions (multiple categories in one entry)

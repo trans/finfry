@@ -1214,3 +1214,42 @@ describe "Finfry::Web dev notes" do
     end
   end
 end
+
+describe "Finfry::App#general_ledger" do
+  it "gives each account its page with balance brought forward and running balance" do
+    with_store do |store|
+      store.record("2026-08-15", "salary",
+        [Finfry::Posting.new("Assets:Checking", 100000_i64), Finfry::Posting.new("Income:Salary", -100000_i64)])
+      store.record("2026-09-02", "rent", expense("Expenses:Rent", 50000))
+      store.record("2026-09-05", "food", expense("Expenses:Food", 2000))
+
+      pages = Finfry::App.new(store).general_ledger(since: "2026-09-01", until_date: "2026-09-30")
+      pages.map(&.account).should eq(["Assets:Checking", "Expenses:Food", "Expenses:Rent", "Income:Salary"])
+      checking = pages.first
+      checking.opening.should eq(100000_i64)
+      checking.rows.map { |r| r.leg.not_nil! }.should eq([-50000_i64, -2000_i64])
+      checking.rows.last.running.should eq(48000_i64)
+      checking.closing.should eq(48000_i64)
+
+      # Income:Salary has no lines in September but carries a balance forward, so it appears too
+      all = Finfry::App.new(store).general_ledger(since: "2026-09-01")
+      all.map(&.account).should contain("Income:Salary")
+      all.find { |p| p.account == "Income:Salary" }.not_nil!.opening.should eq(100000_i64) # credit-normal shown positive
+
+      # a subtree, all time: no opening balance
+      food = Finfry::App.new(store).general_ledger("Expenses").map(&.account)
+      food.should eq(["Expenses:Food", "Expenses:Rent"])
+      Finfry::App.new(store).general_ledger("Expenses").first.opening.should eq(0_i64)
+
+      out, err = Finfry::App.new(store).execute_tool("general_ledger", JSON.parse(%({"prefix":"Assets","since":"2026-09-01"})))
+      err.should be_false
+      out.should contain("Balance brought forward")
+      out.should contain("Closing balance")
+      out.should contain("$480.00")
+
+      _, _, body = web_request(Finfry::Web.new(store), "GET", "/ledger?all=1")
+      body.should contain("General ledger")
+      body.should contain("Income:Salary")
+    end
+  end
+end

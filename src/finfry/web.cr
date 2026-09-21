@@ -64,6 +64,7 @@ module Finfry
       when {"GET", "/"}                  then page_overview(c)
       when {"GET", "/register"}          then page_register(c)
       when {"GET", "/balances"}          then page_balances(c)
+      when {"GET", "/ledger"}            then page_ledger(c)
       when {"GET", "/income"}            then page_income(c)
       when {"GET", "/balance-sheet"}     then page_balance_sheet(c)
       when {"GET", "/daily"}             then page_daily(c)
@@ -127,6 +128,18 @@ module Finfry
         limit: c["limit"]?.presence.try(&.to_i?),
       )
       c.html render(c, "Register", "register", RegisterPage.new(view, c.params, account_filter_options, since, until_date).to_s)
+    end
+
+    # A period, like the register: this month unless a range (or ?all=1) is given.
+    private def page_ledger(c : Ctx) : Nil
+      since = c["since"]?.presence
+      until_date = c["until"]?.presence
+      if since.nil? && until_date.nil? && !c["all"]?.presence
+        since, until_date = month_bounds(c["month"]?.presence || current_month)
+      end
+      prefix = c["prefix"]?.presence
+      pages = @app.general_ledger(prefix, since, until_date)
+      c.html render(c, "General ledger", "ledger", LedgerPage.new(pages, account_filter_options, prefix, since, until_date).to_s)
     end
 
     private def page_balances(c : Ctx) : Nil
@@ -641,6 +654,16 @@ module Finfry
       end
 
       ECR.def_to_s "#{__DIR__}/web/register.ecr"
+    end
+
+    class LedgerPage
+      include Helpers
+
+      def initialize(@pages : Array(LedgerAccount), @accounts : Array(String), @prefix : String?,
+                     @since : String?, @until : String?)
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/ledger.ecr"
     end
 
     class BalancesPage
