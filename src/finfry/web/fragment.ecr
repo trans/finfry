@@ -1,0 +1,11 @@
+<div class="fragment" data-view="<%= h @view %>" data-title="<%= h @title %>">
+<% if f = @flash %>
+<div class="flash <%= f.kind %>" role="status">
+  <pre><%= h f.text %></pre>
+  <% if undo = f.undo %>
+  <form method="post" action="/undo" class="flash-undo"><input type="hidden" name="expect" value="<%= undo %>"><button type="submit" class="small">Undo</button></form>
+  <% end %>
+</div>
+<% end %>
+<%= @body %>
+</div>

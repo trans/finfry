@@ -21,9 +21,11 @@ module Finfry
     DEFAULT_PORT = 4747
 
     # Assets are baked into the binary so `finfry serve` stays self-contained.
-    STYLE  = {{ read_file("#{__DIR__}/web/style.css") }}
-    SCRIPT = {{ read_file("#{__DIR__}/web/app.js") }}
-    DEV_JS = {{ read_file("#{__DIR__}/web/dev.js") }}
+    STYLE     = {{ read_file("#{__DIR__}/web/style.css") }}
+    SCRIPT    = {{ read_file("#{__DIR__}/web/app.js") }}
+    DEV_JS    = {{ read_file("#{__DIR__}/web/dev.js") }}
+    STAGE_CSS = {{ read_file("#{__DIR__}/web/stage.css") }}
+    STAGE_JS  = {{ read_file("#{__DIR__}/web/stage.js") }}
 
     # Where `serve --dev` appends UI notes picked in the browser.
     DEV_NOTES = "dev/ui-notes.md"
@@ -79,6 +81,9 @@ module Finfry
       when {"GET", "/record"}            then page_record(c)
       when {"GET", "/api/recall"}        then api_recall(c)
       when {"GET", "/static/style.css"}  then c.asset("text/css", STYLE)
+      when {"GET", "/static/stage.css"}  then c.asset("text/css", STAGE_CSS)
+      when {"GET", "/static/stage.js"}   then c.asset("text/javascript", STAGE_JS)
+      when {"GET", "/stage"}             then page_stage(c)
       when {"GET", "/static/app.js"}     then c.asset("text/javascript", SCRIPT)
       when {"GET", "/static/dev.js"}     then @dev_notes ? c.asset("text/javascript", DEV_JS) : c.not_found
       when {"POST", "/dev/note"}         then post_dev_note(c)
@@ -444,9 +449,20 @@ module Finfry
       raise Error.new("invalid month #{month.inspect} (expected YYYY-MM)")
     end
 
+    # A page: the body in the full layout, or — for the stage's panes, which
+    # ask with an `X-Finfry-Fragment` header — just the body with its note.
     private def render(c : Ctx, title : String, active : String, body : String) : String
+      if c.fragment?
+        return Fragment.new(title, active, body, c.flash).to_s
+      end
       Layout.new(title, active, body, File.expand_path(@store.path), Books.list, @store.example?,
         @store.due_entries.size + @app.newly_due, c.flash, !@dev_notes.nil?).to_s
+    end
+
+    # The stage: the same pages as panes on a ring, three visible at a time,
+    # with the assistant as a peer pane. Design pass — no AI wired yet.
+    private def page_stage(c : Ctx) : Nil
+      c.html StagePage.new(File.expand_path(@store.path), Books.list, @store.example?, !@dev_notes.nil?).to_s
     end
 
     private def today : String
@@ -508,6 +524,11 @@ module Finfry
 
       def wants_json? : Bool
         @ctx.request.headers["Accept"]?.try(&.includes?("application/json")) || false
+      end
+
+      # A stage pane asking for a page body without the layout.
+      def fragment? : Bool
+        @ctx.request.headers.has_key?("X-Finfry-Fragment")
       end
 
       def html(body : String) : Nil
@@ -637,6 +658,35 @@ module Finfry
         parts = short.split('/')
         parts.size > 3 ? "…/#{parts.last(2).join('/')}" : short
       end
+    end
+
+    # A page body for a stage pane: its note (if any) and the body, with the
+    # title and view name for the pane's chrome.
+    class Fragment
+      include Helpers
+
+      def initialize(@title : String, @view : String, @body : String, @flash : Ctx::Flash?)
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/fragment.ecr"
+    end
+
+    class StagePage
+      include Helpers
+
+      def initialize(@book : String, @books : Array(Books::Entry), @example : Bool, @dev : Bool)
+      end
+
+      def book_options : String
+        @books.map do |e|
+          attrs = e.path == @book ? " selected" : ""
+          attrs += " disabled" if !e.exists?
+          note = e.example? ? " (example)" : e.global? ? " (global)" : ""
+          %(<option value="#{h e.path}"#{attrs}>#{h Books.display(e.path)}#{note}</option>)
+        end.join
+      end
+
+      ECR.def_to_s "#{__DIR__}/web/stage.ecr"
     end
 
     class Layout

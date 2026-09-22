@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en" class="js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>finfry · stage</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/stage.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23edf2e8'/%3E%3Cpath d='M3 4h10M3 8h10M3 12h6' stroke='%2324476b' stroke-width='1.6'/%3E%3C/svg%3E">
+</head>
+<body class="stage-body">
+<header class="stage-top">
+  <a class="brand" href="/stage">finfry</a>
+  <form method="post" action="/book" class="book-switch" title="<%= h @book %>">
+    <select name="path" aria-label="Book" onchange="this.form.submit()"><%= book_options %></select>
+    <span class="book-kind <%= @example ? "example" : "real" %>"><%= @example ? "example book" : "real book" %></span>
+  </form>
+  <span class="spacer"></span>
+  <span class="stage-hint">Alt+← / Alt+→ rotates · click a side pane's title to bring it forward · rails hold the rest</span>
+  <a class="stage-plain" href="/" title="The plain pages">pages</a>
+</header>
+
+<div class="stage" data-stage>
+  <aside class="rail left" data-rail="left" aria-label="Parked views (left)"></aside>
+  <div class="slot left" data-slot="left"></div>
+  <div class="slot focal" data-slot="focal"></div>
+  <div class="slot right" data-slot="right"></div>
+  <aside class="rail right" data-rail="right" aria-label="Parked views (right)"></aside>
+  <div class="holder" data-holder hidden></div>
+</div>
+
+<section class="cards" data-cards aria-label="Assistant cards">
+  <article class="card proposal sample">
+    <header><span class="kind">Proposal</span> <span class="who">assistant</span> <span class="tag">sample — not wired</span></header>
+    <p>Record <strong>$48.20</strong> from <strong>Assets:Checking</strong> to <strong>Expenses:Food:Groceries</strong> on 2026-09-03, memo <em>Market run</em> — matches your last three Market runs.</p>
+    <footer><button class="primary small" disabled>Approve</button> <button class="small" disabled>Edit</button> <button class="quiet small" disabled>Decline</button></footer>
+  </article>
+</section>
+
+<form class="ask" data-ask>
+  <input name="text" placeholder="Ask finfry, or tell it what happened… (the assistant arrives in the next step)" autocomplete="off" disabled>
+  <button type="submit" class="primary" disabled>Send</button>
+</form>
+
+<script src="/static/app.js" defer></script>
+<script src="/static/stage.js" defer></script>
+<% if @dev %><script src="/static/dev.js" defer></script><% end %>
+</body>
+</html>

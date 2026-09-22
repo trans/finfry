@@ -1,9 +1,13 @@
 // Progressive enhancement only. Everything here has a plain-form fallback;
 // this just saves a single row's decision the moment it changes, so working
 // through a statement or a due queue doesn't reload the page per click.
+//
+// `finfryInit(root)` wires the behaviours inside `root`; the plain pages call
+// it once for the document, the stage once per pane load.
 document.documentElement.classList.add("js");
 
-document.querySelectorAll("form[data-autosave]").forEach((form) => {
+window.finfryInit = function finfryInit(root) {
+root.querySelectorAll("form[data-autosave]").forEach((form) => {
   form.addEventListener("change", async (event) => {
     const el = event.target;
     if (el.form !== form) return; // an input that belongs to another form (the due "adjust" editors)
@@ -81,7 +85,7 @@ function note(el, text) {
 // last entry (never overwriting what you typed), and a line under the fields
 // says what the entry will be — inferred from the accounts, exactly as the
 // server infers it.
-const record = document.querySelector("form[data-record]");
+const record = root.querySelector("form[data-record]");
 if (record) {
   const field = (name) => record.querySelector(`[name=${name}]`);
   const kindLine = record.querySelector("[data-kind]");
@@ -123,3 +127,6 @@ if (record) {
   ["to", "from", "amount"].forEach((n) => field(n).addEventListener("input", describe));
   describe();
 }
+};
+
+window.finfryInit(document);

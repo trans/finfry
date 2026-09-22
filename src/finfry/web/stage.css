@@ -1,0 +1,97 @@
+/* The stage — the same pages as panes on a ring, three visible at a time.
+   Chrome stays quiet: the panes are the paper. */
+
+.stage-body { display: flex; flex-direction: column; height: 100vh; margin: 0; overflow: hidden; }
+
+.stage-top {
+  display: flex; align-items: center; gap: 18px; flex-shrink: 0;
+  padding: 8px 18px; border-bottom: 1px solid var(--rule); background: var(--paper-2);
+}
+.stage-top .brand { font-size: 1.3rem; }
+.stage-top .book-switch { margin: 0; display: flex; align-items: center; gap: 8px; }
+.stage-top .book-switch select { width: auto; max-width: 320px; }
+.stage-top .book-kind { margin: 0; }
+.stage-top .spacer { flex: 1; }
+.stage-hint { font-size: .78rem; color: var(--ink-2); }
+.stage-plain { font-size: .8rem; color: var(--ink-2); }
+
+/* --- the ring ------------------------------------------------------------ */
+
+.stage {
+  flex: 1; min-height: 0; position: relative;
+  display: grid; grid-template-columns: 28px minmax(0, 30fr) minmax(0, 40fr) minmax(0, 30fr) 28px;
+  gap: 10px; padding: 12px 8px; background: var(--paper);
+}
+.slot { min-height: 0; display: flex; }
+.slot .pane { flex: 1; }
+.holder { display: none; }
+
+.pane {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; box-shadow: var(--shadow);
+  transition: box-shadow .25s ease, border-color .25s ease;
+}
+.slot.focal .pane { border-color: var(--rule-strong); box-shadow: 0 2px 10px rgba(27, 38, 32, .10); }
+.slot.left .pane, .slot.right .pane { font-size: .86rem; }
+.slot.left .pane h1, .slot.right .pane h1 { font-size: 1.3rem; }
+.slot.left .pane .page-head .sub, .slot.right .pane .page-head .sub { display: none; }
+
+.pane-bar {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  padding: 6px 10px; border-bottom: 1px solid var(--rule); background: var(--paper-2); border-radius: 6px 6px 0 0;
+  cursor: default; user-select: none;
+}
+.slot.left .pane-bar, .slot.right .pane-bar { cursor: pointer; }
+.pane-bar .pane-title { font-family: var(--serif); font-size: 1rem; color: var(--ink); }
+.pane-bar .pane-title small { font-family: var(--sans); color: var(--ink-2); font-size: .75rem; margin-left: 6px; }
+.pane-bar .spacer { flex: 1; }
+.pane-bar button {
+  border: 0; background: transparent; color: var(--ink-2); padding: 2px 6px; border-radius: 3px; line-height: 1; font-size: .9rem;
+}
+.pane-bar button:hover { background: var(--paper-3); color: var(--ink); }
+.pane-body { flex: 1; min-height: 0; overflow: auto; padding: 14px 18px 24px; }
+.pane-body.loading { opacity: .5; }
+.pane-body > .fragment > .page-head { margin-bottom: 12px; }
+.pane-body > .fragment > .page-head h1 { display: none; } /* the pane bar carries the title */
+.slot.left .pane .page-head, .slot.right .pane .page-head { display: none; }
+.pane-body .flash { margin-bottom: 12px; }
+.pane-body .empty { padding: 14px 0; }
+
+/* focal pane content uses full width; side panes tighten tables */
+.slot.left .ledger th, .slot.left .ledger td, .slot.right .ledger th, .slot.right .ledger td { padding: 4px 6px; }
+
+/* --- rails ------------------------------------------------------------ */
+
+.rail { display: flex; flex-direction: column; gap: 6px; align-items: center; padding-top: 4px; }
+.rail button {
+  writing-mode: vertical-rl; transform: rotate(180deg);
+  border: 1px solid var(--rule); background: var(--paper-2); color: var(--ink-2);
+  border-radius: 4px; padding: 10px 4px; font-size: .75rem; letter-spacing: .04em; cursor: pointer;
+}
+.rail button:hover { background: var(--surface); color: var(--pen); border-color: var(--rule-strong); }
+.rail.right button { transform: none; }
+
+/* --- assistant cards + ask bar ---------------------------------------------- */
+
+.cards {
+  flex-shrink: 0; display: flex; gap: 12px; overflow-x: auto;
+  padding: 10px 18px 6px; border-top: 1px solid var(--rule); background: var(--paper-2);
+}
+.cards:empty { display: none; }
+.card {
+  flex: 0 0 420px; background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 6px; padding: 10px 14px;
+  font-size: .9rem;
+}
+.card header { display: flex; gap: 8px; align-items: baseline; font-size: .75rem; color: var(--ink-2); margin-bottom: 6px; }
+.card header .kind { text-transform: uppercase; letter-spacing: .1em; font-weight: 600; color: var(--pen); }
+.card p { margin: 0 0 8px; }
+.card footer { display: flex; gap: 6px; }
+.card.sample { border-style: dashed; }
+
+.ask { display: flex; gap: 8px; flex-shrink: 0; padding: 8px 18px 12px; background: var(--paper-2); }
+.ask input { flex: 1; padding: 8px 12px; }
+
+@media (max-width: 1100px) {
+  .stage { grid-template-columns: 28px minmax(0, 1fr) 28px; }
+  .slot.left, .slot.right { display: none; }
+}
