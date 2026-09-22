@@ -2,7 +2,7 @@ version: 2.0
 shards:
   c0:
     git: https://github.com/c0data/c0-cr.git
-    version: 0.10.0
+    version: 0.10.1
 
   jargon:
     git: https://github.com/trans/jargon.git
