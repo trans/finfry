@@ -9,6 +9,6 @@ shards:
     version: 0.20.1
 
   keep:
-    path: /home/trans/my/com/tabcomputing/keep
+    git: https://github.com/tabcomputing/keep.git
     version: 0.1.0
 
