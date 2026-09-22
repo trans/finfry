@@ -1,8 +1,8 @@
 version: 2.0
 shards:
   c0:
-    path: /home/trans/Projects/c0/c0-cr
-    version: 0.9.1
+    git: https://github.com/c0data/c0-cr.git
+    version: 0.10.0
 
   jargon:
     git: https://github.com/trans/jargon.git
